@@ -1162,7 +1162,6 @@ const handleSend = async (textToProcess) => {
       let reply = "";
       const lower = text.toLowerCase();
 
-      // 1. Verificar se o utilizador está a pedir saldo
       if (lower.includes('saldo')) {
         reply = `Seu saldo total atual é de ${formatCurrency(balances.total)} (Nubank: ${formatCurrency(balances.nubank)} | Inter: ${formatCurrency(balances.inter)}).`;
         setChatMessages([...newMessages, { role: 'model', text: reply }]);
@@ -1170,7 +1169,6 @@ const handleSend = async (textToProcess) => {
         return;
       }
 
-      // 2. Verificar se o utilizador está a falar de investimentos/caixinhas
       if (lower.includes('investimento') || lower.includes('caixinha')) {
         reply = "Suas caixinhas estão ativas. Vá até a aba 'Caixinhas' para gerenciar!";
         setChatMessages([...newMessages, { role: 'model', text: reply }]);
@@ -1178,42 +1176,56 @@ const handleSend = async (textToProcess) => {
         return;
       }
 
-      // --- MEMÓRIA CONVERSACIONAL INTELIGENTE ---
-      // Verificamos se a última mensagem do assistente foi uma pergunta pendente (ex: falta o banco ou o nome)
+      // --- MEMÓRIA CONVERSACIONAL CORRIGIDA E BLINDADA ---
       const lastAssistantMsg = chatMessages.slice().reverse().find(m => m.role === 'model')?.text || "";
       
       // Se a IA perguntou anteriormente qual era o banco e o utilizador respondeu agora
       if (lastAssistantMsg.includes('Qual o banco') || lastAssistantMsg.includes('Nubank ou Inter')) {
-        // Vamos buscar a última transação temporária ou pendente e concluir com o banco informado
         let account = 'Nubank';
         if (/\b(inter)\b/i.test(text)) account = 'Inter';
         if (/\b(nubank|nu)\b/i.test(text)) account = 'Nubank';
 
-        // Recupera o valor e descrição da mensagem anterior do utilizador
-        const prevUserMsg = chatMessages.filter(m => m.role === 'user').slice(-2)[0]?.text || text;
-        const numberMatch = prevUserMsg.match(/(?:r\$\s*)?(\d+([.,]\d{1,2})?)/);
-        const amount = numberMatch ? parseFloat(numberMatch[1].replace(',', '.')) : 10;
+        // Vamos buscar a mensagem anterior exata do utilizador onde ele disse o gasto/ganho
+        const prevUserMsg = chatMessages.filter(m => m.role === 'user').slice(-2)[0]?.text || "";
         
+        // Extrai o valor correto da frase anterior
+        const numberMatch = prevUserMsg.match(/(?:r\$\s*)?(\d+([.,]\d{1,2})?)/);
+        const amount = numberMatch ? parseFloat(numberMatch[1].replace(',', '.')) : 0;
+        
+        // Verifica se é uma entrada ou saída com base na frase anterior
+        const isIncome = /\b(recebi|ganhei|entrou|caiu|salario|salário|pix de|deposito)\b/i.test(prevUserMsg) && 
+                         !/\b(gastei|paguei|comprei|mandei)\b/i.test(prevUserMsg);
+        const type = isIncome ? 'income' : 'expense';
+
+        // Extrai a descrição limpa da frase anterior
         let description = prevUserMsg
           .replace(/(?:r\$\s*)?\d+([.,]\d{1,2})?/gi, '')
-          .replace(/\b(no|na|do|da|de|em|reais|real|r\$)\b/gi, '')
+          .replace(/\b(no|na|do|da|de|em|reais|real|r\$|inter|nubank|nu)\b/gi, '')
           .replace(/\s+/g, ' ')
           .trim();
-        description = description ? description.charAt(0).toUpperCase() + description.slice(1) : 'Gasto Geral';
+        
+        description = description ? description.charAt(0).toUpperCase() + description.slice(1) : (type === 'expense' ? 'Despesa' : 'Receita');
 
-        addTransaction(description, amount, account, 'expense');
-        reply = `Perfeito! Registrei ${formatCurrency(amount)} em "${description}" na conta do ${account}.`;
+        if (amount > 0) {
+          addTransaction(description, amount, account, type);
+          if (type === 'expense') {
+            reply = `Perfeito! Registrei a saída de ${formatCurrency(amount)} em "${description}" na conta do ${account}.`;
+          } else {
+            reply = `Perfeito! Registrei a entrada de ${formatCurrency(amount)} (${description}) na conta do ${account}.`;
+          }
+        } else {
+          reply = "Desculpe, ocorreu um erro ao recuperar o valor da transação. Pode repetir a frase completa?";
+        }
         
         setChatMessages([...newMessages, { role: 'model', text: reply }]);
         setIsLoading(false);
         return;
       }
 
-      // 3. EXTRAÇÃO INTELIGENTE DO VALOR DA FRASE ATUAL
+      // EXTRAÇÃO NORMAL DA FRASE ATUAL
       const numberMatch = text.match(/(?:r\$\s*)?(\d+([.,]\d{1,2})?)/);
       const amount = numberMatch ? parseFloat(numberMatch[1].replace(',', '.')) : null;
 
-      // Se o utilizador digitou uma transação mas NÃO informou o valor
       if (!amount && (/\b(gastei|paguei|comprei|recebi|ganhei)\b/i.test(text) || text.length > 3)) {
         reply = "Entendi que quer registar uma movimentação, mas faltou informar o **valor** (ex: R$ 50). Quanto foi?";
         setChatMessages([...newMessages, { role: 'model', text: reply }]);
@@ -1222,7 +1234,6 @@ const handleSend = async (textToProcess) => {
       }
 
       if (amount) {
-        // Identificação do Banco por contexto
         let account = null;
         if (/\b(inter|banco inter)\b/i.test(text)) {
           account = 'Inter';
@@ -1230,12 +1241,10 @@ const handleSend = async (textToProcess) => {
           account = 'Nubank';
         }
 
-        // Identificação do Tipo (Entrada vs Saída)
         const isIncome = /\b(recebi|ganhei|entrou|caiu|salario|salário|pix de|deposito)\b/i.test(text) && 
                          !/\b(gastei|paguei|comprei|mandei)\b/i.test(text);
         const type = isIncome ? 'income' : 'expense';
 
-        // Extração da Descrição
         let description = text
           .replace(/(?:r\$\s*)?\d+([.,]\d{1,2})?/gi, '')
           .replace(/\b(no|na|do|da|de|em|pela|pelo|reais|real|r\$)\b/gi, '')
@@ -1243,16 +1252,13 @@ const handleSend = async (textToProcess) => {
           .replace(/\s+/g, ' ')
           .trim();
 
-        // 4. VALIDAÇÃO DE DADOS EM FALTA (O pulo do gato da IA inteligente)
-        // Se o utilizador disse o valor e o banco, mas esqueceu o O QUÊ (descrição)
         if (!description || description.length < 2) {
-          reply = `Certo, ${formatCurrency(amount)}. Mas **o que foi** essa compra/gasto? (ex: Almoço, Uber, Mercado...)`;
+          reply = `Certo, ${formatCurrency(amount)}. Mas **o que foi** essa movimentação? (ex: Almoço, Uber, Duda...)`;
           setChatMessages([...newMessages, { role: 'model', text: reply }]);
           setIsLoading(false);
           return;
         }
 
-        // Se o utilizador disse o valor e o que comprou, mas **esqueceu de dizer o banco**
         if (!account) {
           reply = `Compreendido! ${formatCurrency(amount)} em "${description.charAt(0).toUpperCase() + description.slice(1)}". Qual o banco? **Nubank** ou **Inter**?`;
           setChatMessages([...newMessages, { role: 'model', text: reply }]);
@@ -1260,7 +1266,6 @@ const handleSend = async (textToProcess) => {
           return;
         }
 
-        // Se tem tudo (Valor, Descrição e Banco), executa a acção com perfeição!
         description = description.charAt(0).toUpperCase() + description.slice(1);
         addTransaction(description, amount, account, type);
 
