@@ -112,44 +112,49 @@ export default function App() {
     }
   };
 
-// --- Integração com a Siri (Lê e processa perfeitamente o parâmetro ?texto= da URL) ---
+// --- Integração Inteligente com a Siri via URL ---
   useEffect(() => {
     const queryParams = new URLSearchParams(window.location.search);
     const textoParam = queryParams.get('texto');
     
     if (textoParam) {
-      // Decodifica o texto da URL caso venha com caracteres codificados (%20, etc)
-      const textoDecodificado = decodeURIComponent(textoParam);
+      const textoDecodificado = decodeURIComponent(textoParam).toLowerCase();
       
-      // Procura qualquer sequência de números (inteiros ou decimais com vírgula/ponto)
+      // 1. Identifica o valor numérico (ex: 15, 15.50)
       const matchNumeros = textoDecodificado.match(/\d+([.,]\d+)?/);
-      let valor = 0;
-      
-      if (matchNumeros && matchNumeros[0]) {
-        // Normaliza a vírgula para ponto e converte para float
-        valor = parseFloat(matchNumeros[0].replace(',', '.'));
+      let valor = matchNumeros ? parseFloat(matchNumeros[0].replace(',', '.')) : 0;
+
+      // 2. Identifica automaticamente o banco (Nubank ou Inter)
+      let bancoDestino = 'Nubank'; // Padrão
+      if (textoDecodificado.includes('inter')) {
+        bancoDestino = 'Inter';
+      } else if (textoDecodificado.includes('nubank') || textoDecodificado.includes('nu')) {
+        bancoDestino = 'Nubank';
       }
 
-      // Remove o número encontrado e palavras comuns para isolar a descrição
-      const descricao = textoDecodificado
+      // 3. Identifica se é entrada (ganho) ou saída (gasto)
+      let tipoMovimento = 'expense';
+      if (textoDecodificado.includes('ganhei') || textoDecodificado.includes('recebi') || textoDecodificado.includes('salário')) {
+        tipoMovimento = 'income';
+      }
+
+      // 4. Limpa o texto para isolar apenas a descrição limpa do gasto
+      let descricao = textoDecodificado
         .replace(matchNumeros ? matchNumeros[0] : '', '')
-        .replace(/reais|real|gastei|comprei|de|por|no|na|um|uma/gi, '')
+        .replace(/reais|real|gastei|comprei|de|por|no|na|app|banco|nubank|inter/gi, '')
         .trim();
 
-      addTransaction(
-        descricao ? descricao.charAt(0).toUpperCase() + descricao.slice(1) : 'Gasto via Siri', 
-        valor > 0 ? valor : 0, 
-        'Nubank', 
-        'expense'
-      );
+      descricao = descricao ? descricao.charAt(0).toUpperCase() + descricao.slice(1) : 'Gasto via Siri';
+
+      // 5. Adiciona a transação com tudo distribuído automaticamente
+      addTransaction(descricao, valor || 0, bancoDestino, tipoMovimento);
       
-      showToast(`Gasto via Siri registrado: ${formatCurrency(valor)}`);
+      showToast(`Registrado: ${descricao} (${formatCurrency(valor)}) no ${bancoDestino}!`);
 
       // Limpa a URL para evitar reprocessar ao atualizar a página
       window.history.replaceState({}, document.title, window.location.pathname);
     }
   }, []);
-
   // --- Derived State (Balances) ---
   const getBalance = (account) => {
     return transactions
