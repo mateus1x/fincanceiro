@@ -112,49 +112,84 @@ export default function App() {
     }
   };
 
-// --- Integração Inteligente com a Siri via URL ---
+
+
+
+  // --- Integração da Siri com a IA (FinIA) ---
   useEffect(() => {
     const queryParams = new URLSearchParams(window.location.search);
     const textoParam = queryParams.get('texto');
     
     if (textoParam) {
-      const textoDecodificado = decodeURIComponent(textoParam).toLowerCase();
+      const textoDecodificado = decodeURIComponent(textoParam);
       
-      // 1. Identifica o valor numérico (ex: 15, 15.50)
-      const matchNumeros = textoDecodificado.match(/\d+([.,]\d+)?/);
-      let valor = matchNumeros ? parseFloat(matchNumeros[0].replace(',', '.')) : 0;
+      // Função assíncrona para pedir à IA que interprete o comando da Siri
+      const processarComandoViaSiri = async () => {
+        showToast('FinIA a processar comando da Siri...');
+        
+        const systemPrompt = `Você é a FinIA, uma assistente financeira. O usuário enviou o seguinte comando por voz através da Siri: "${textoDecodificado}".
+Analise o texto e extraia os dados para registrar a movimentação financeira.
+Retorne obrigatoriamente um bloco de código JSON no final com este formato exato:
+\`\`\`json
+{
+  "action": "add_transaction",
+  "description": "descrição limpa do gasto ou ganho",
+  "amount": 20.00,
+  "account": "Nubank" ou "Inter",
+  "type": "expense" ou "income"
+}
+\`\`\`
+Se o banco não for citado explicitamente, use "Nubank" como padrão. Se for ganho/salário/recebimento, use "income", caso contrário use "expense".`;
 
-      // 2. Identifica automaticamente o banco (Nubank ou Inter)
-      let bancoDestino = 'Nubank'; // Padrão
-      if (textoDecodificado.includes('inter')) {
-        bancoDestino = 'Inter';
-      } else if (textoDecodificado.includes('nubank') || textoDecodificado.includes('nu')) {
-        bancoDestino = 'Nubank';
-      }
+        try {
+          const payload = {
+            contents: [{ role: 'user', parts: [{ text: textoDecodificado }] }],
+            systemInstruction: { parts: [{ text: systemPrompt }] },
+            generationConfig: { temperature: 0.1 }
+          };
 
-      // 3. Identifica se é entrada (ganho) ou saída (gasto)
-      let tipoMovimento = 'expense';
-      if (textoDecodificado.includes('ganhei') || textoDecodificado.includes('recebi') || textoDecodificado.includes('salário')) {
-        tipoMovimento = 'income';
-      }
+          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=SUA_CHAVE`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          
+          const data = await response.json();
+          const aiResponse = data.candidates?.[0]?.content?.parts?.[0]?.text;
 
-      // 4. Limpa o texto para isolar apenas a descrição limpa do gasto
-      let descricao = textoDecodificado
-        .replace(matchNumeros ? matchNumeros[0] : '', '')
-        .replace(/reais|real|gastei|comprei|de|por|no|na|app|banco|nubank|inter/gi, '')
-        .trim();
+          if (aiResponse) {
+            const jsonMatch = aiResponse.match(/```json\n([\s\S]*?)\n```/);
+            
+            if (jsonMatch) {
+              const actionData = JSON.parse(jsonMatch[1]);
+              
+              if (actionData.action === 'add_transaction' && actionData.amount > 0) {
+                addTransaction(
+                  actionData.description || 'Gasto via Siri', 
+                  actionData.amount, 
+                  actionData.account || 'Nubank', 
+                  actionData.type || 'expense'
+                );
+                showToast(`Sucesso! ${actionData.description} (${formatCurrency(actionData.amount)}) no ${actionData.account || 'Nubank'}`);
+              } else {
+                showToast('A IA não conseguiu identificar o valor corretamente.');
+              }
+            }
+          }
+        } catch (error) {
+          console.error('Erro ao processar comando da Siri com a IA:', error);
+          showToast('Erro ao comunicar com a FinIA.');
+        }
 
-      descricao = descricao ? descricao.charAt(0).toUpperCase() + descricao.slice(1) : 'Gasto via Siri';
+        // Limpa a URL para evitar reprocessar ao atualizar a página
+        window.history.replaceState({}, document.title, window.location.pathname);
+      };
 
-      // 5. Adiciona a transação com tudo distribuído automaticamente
-      addTransaction(descricao, valor || 0, bancoDestino, tipoMovimento);
-      
-      showToast(`Registrado: ${descricao} (${formatCurrency(valor)}) no ${bancoDestino}!`);
-
-      // Limpa a URL para evitar reprocessar ao atualizar a página
-      window.history.replaceState({}, document.title, window.location.pathname);
+      processarComandoViaSiri();
     }
   }, []);
+
+  
   // --- Derived State (Balances) ---
   const getBalance = (account) => {
     return transactions
