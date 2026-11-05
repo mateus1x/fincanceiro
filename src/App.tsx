@@ -149,7 +149,7 @@ Regras:
             generationConfig: { temperature: 0.1 }
           };
 
-          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=SUA_CHAVE`, {
+          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=AQ.Ab8RN6KEvfcHYTFfE9tGW_68qIM50oMiELAJnCuqg7qeodvSlQ`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
