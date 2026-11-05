@@ -112,21 +112,34 @@ export default function App() {
     }
   };
 
-  // --- Integração com a Siri (Lê o parâmetro ?texto= da URL enviado pelo Atalho) ---
+  // --- Integração com a Siri (Lê e processa perfeitamente o parâmetro ?texto= da URL) ---
   useEffect(() => {
     const queryParams = new URLSearchParams(window.location.search);
     const textoParam = queryParams.get('texto');
     
     if (textoParam) {
-      // Extrai valores e descrição básicos da frase da Siri (ex: "gastei 15 reais no almoço")
-      const numeros = textoParam.match(/\d+([.,]\d+)?/);
-      const valor = numeros ? parseFloat(numeros[0].replace(',', '.')) : 0;
-      const descricao = textoParam.replace(numeros ? numeros[0] : '', '').replace(/reais|real|gastei|comprei|de/gi, '').trim();
+      const matchNumeros = textoParam.match(/(\d+([.,]\d+)?)/);
+      let valor = 0;
+      
+      if (matchNumeros) {
+        valor = parseFloat(matchNumeros[0].replace(',', '.'));
+      }
 
-      addTransaction(descricao || 'Gasto via Siri', valor || 0, 'Nubank', 'expense');
+      const descricao = textoParam
+        .replace(matchNumeros ? matchNumeros[0] : '', '')
+        .replace(/reais|real|gastei|comprei|de|por/gi, '')
+        .trim();
+
+      addTransaction(
+        descricao ? descricao.charAt(0).toUpperCase() + descricao.slice(1) : 'Gasto via Siri', 
+        valor || 0, 
+        'Nubank', 
+        'expense'
+      );
+      
       showToast(`Gasto via Siri registrado: ${formatCurrency(valor)}`);
 
-      // Limpa a URL para evitar reprocessar ao recarregar a página
+      // Limpa a URL para evitar reprocessar ao atualizar a página
       window.history.replaceState({}, document.title, window.location.pathname);
     }
   }, []);
