@@ -21,6 +21,10 @@ import {
   Trash2
 } from 'lucide-react';
 
+// --- CHAVE DA API DO GEMINI GLOBAL ---
+// Cole aqui a sua chave correta (deve começar com AIza...)
+const GEMINI_API_KEY = "SUA_CHAVE_REAL_AQUI";
+
 // --- Custom Hook for Local Storage ---
 function useLocalStorage(key, initialValue) {
   const [storedValue, setStoredValue] = useState(() => {
@@ -112,111 +116,6 @@ export default function App() {
     }
   };
 
-
-
-// --- Integração da Siri com a IA (FinIA) ---
-  useEffect(() => {
-    const queryParams = new URLSearchParams(window.location.search);
-    const textoParam = queryParams.get('texto');
-    
-    if (textoParam) {
-      const textoDecodificado = decodeURIComponent(textoParam);
-      
-      const processarComandoViaSiri = async () => {
-        showToast('FinIA a processar comando da Siri...');
-        
-        const systemPrompt = `Você é a FinIA, uma assistente financeira. O usuário enviou o seguinte comando por voz através da Siri: "${textoDecodificado}".
-Analise o texto e extraia os dados exatos para registrar a movimentação financeira.
-Retorne obrigatoriamente um bloco de código JSON no final com este formato exato:
-\`\`\`json
-{
-  "action": "add_transaction",
-  "description": "descrição limpa do gasto ou ganho",
-  "amount": 20.00,
-  "account": "Nubank" ou "Inter",
-  "type": "expense" ou "income"
-}
-\`\`\`
-Regras:
-- "amount" DEVE ser um número decimal válido (ex: 20.00, 45.50). Nunca retorne zero.
-- Se o banco não for citado explicitamente, use "Nubank".
-- Se for ganho/salário/recebimento, type é "income", caso contrário "expense".`;
-
-        try {
-          const payload = {
-            contents: [{ role: 'user', parts: [{ text: textoDecodificado }] }],
-            systemInstruction: { parts: [{ text: systemPrompt }] },
-            generationConfig: { temperature: 0.1 }
-          };
-
-          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=AQ.Ab8RN6KEvfcHYTFfE9tGW_68qIM50oMiELAJnCuqg7qeodvSlQ`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-          });
-          
-          const data = await response.json();
-          const aiResponse = data.candidates?.[0]?.content?.parts?.[0]?.text;
-
-          if (aiResponse) {
-            const jsonMatch = aiResponse.match(/```json\n([\s\S]*?)\n```/) || aiResponse.match(/{[\s\S]*}/);
-            
-            if (jsonMatch) {
-              const jsonString = jsonMatch[1] || jsonMatch[0];
-              const actionData = JSON.parse(jsonString);
-              
-              if (actionData.action === 'add_transaction' && actionData.amount > 0) {
-                const parsedAmount = parseFloat(actionData.amount);
-                const desc = actionData.description || 'Gasto via Siri';
-                const acc = actionData.account || 'Nubank';
-                const tType = actionData.type || 'expense';
-
-                // Criar nova transação
-                const newTx = {
-                  id: crypto.randomUUID(),
-                  description: desc,
-                  amount: parsedAmount,
-                  account: acc,
-                  type: tType,
-                  date: new Date().toISOString()
-                };
-
-                // Pega transações atuais diretamente do localStorage para garantir que não perde nada
-                const storedTransactions = JSON.parse(window.localStorage.getItem('fin_transactions_v2') || '[]');
-                const updatedTransactions = [newTx, ...storedTransactions];
-
-                // Salva no localStorage e força atualização do estado do React
-                window.localStorage.setItem('fin_transactions_v2', JSON.stringify(updatedTransactions));
-                setTransactions(updatedTransactions);
-
-                showToast(`Sucesso! ${desc} (${formatCurrency(parsedAmount)}) no ${acc}`);
-              }
-            }
-          }
-        } catch (error) {
-          console.error('Erro ao processar comando da Siri com a IA:', error);
-          showToast('Erro ao comunicar com a FinIA.');
-        }
-
-        // Limpa a URL para evitar reprocessar ao atualizar a página
-        window.history.replaceState({}, document.title, window.location.pathname);
-      };
-
-      processarComandoViaSiri();
-    }
-  }, []);
-  
-  // --- Derived State (Balances) ---
-  const getBalance = (account) => {
-    return transactions
-      .filter(t => account === 'Total' || t.account === account)
-      .reduce((acc, curr) => curr.type === 'income' ? acc + curr.amount : acc - curr.amount, 0);
-  };
-
-  const totalBalance = getBalance('Total');
-  const nubankBalance = getBalance('Nubank');
-  const interBalance = getBalance('Inter');
-
   // --- Actions ---
   const showToast = (msg) => {
     setToastMessage(msg);
@@ -255,15 +154,15 @@ Regras:
           const existingIndex = newInvestments.findIndex(i => i.name.toLowerCase() === newCaixinhaName.toLowerCase() && i.bank === newAccount);
           if (existingIndex >= 0) {
              newInvestments[existingIndex] = {
-               ...newInvestments[existingIndex],
-               amount: newInvestments[existingIndex].amount + newAmount
+              ...newInvestments[existingIndex],
+              amount: newInvestments[existingIndex].amount + newAmount
              };
           } else {
              newInvestments.push({
-               id: crypto.randomUUID(),
-               name: newCaixinhaName,
-               bank: newAccount,
-               amount: newAmount
+              id: crypto.randomUUID(),
+              name: newCaixinhaName,
+              bank: newAccount,
+              amount: newAmount
              });
           }
         }
@@ -296,6 +195,106 @@ Regras:
     showToast('Salário e Vale depositados com sucesso!');
     setShowSettings(false);
   };
+
+// --- Integração da Siri com a IA (FinIA) ---
+  useEffect(() => {
+    const queryParams = new URLSearchParams(window.location.search);
+    const textoParam = queryParams.get('texto');
+    
+    if (textoParam) {
+      const textoDecodificado = decodeURIComponent(textoParam);
+      
+      const processarComandoViaSiri = async () => {
+        showToast('FinIA a processar comando da Siri...');
+        
+        const systemPrompt = `Você é a FinIA, uma assistente financeira. O usuário enviou o seguinte comando por voz através da Siri: "${textoDecodificado}".
+Analise o texto e extraia os dados exatos para registrar a movimentação financeira.
+Retorne obrigatoriamente um bloco de código JSON no final com este formato exato:
+\`\`\`json
+{
+  "action": "add_transaction",
+  "description": "descrição limpa do gasto ou ganho",
+  "amount": 20.00,
+  "account": "Nubank" ou "Inter",
+  "type": "expense" ou "income"
+}
+\`\`\`
+Regras:
+- "amount" DEVE ser um número decimal válido (ex: 20.00, 45.50). Nunca retorne zero.
+- Se o banco não for citado explicitamente, use "Nubank".
+- Se for ganho/salário/recebimento, type é "income", caso contrário "expense".`;
+
+        try {
+          const payload = {
+            contents: [{ role: 'user', parts: [{ text: textoDecodificado }] }],
+            systemInstruction: { parts: [{ text: systemPrompt }] },
+            generationConfig: { temperature: 0.1 }
+          };
+
+          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          
+          const data = await response.json();
+          const aiResponse = data.candidates?.[0]?.content?.parts?.[0]?.text;
+
+          if (aiResponse) {
+            const jsonMatch = aiResponse.match(/```json\n([\s\S]*?)\n```/) || aiResponse.match(/{[\s\S]*}/);
+            
+            if (jsonMatch) {
+              const jsonString = jsonMatch[1] || jsonMatch[0];
+              const actionData = JSON.parse(jsonString);
+              
+              if (actionData.action === 'add_transaction' && actionData.amount > 0) {
+                const parsedAmount = parseFloat(actionData.amount);
+                const desc = actionData.description || 'Gasto via Siri';
+                const acc = actionData.account || 'Nubank';
+                const tType = actionData.type || 'expense';
+
+                // Criar nova transação
+                const newTx = {
+                  id: crypto.randomUUID(),
+                  description: desc,
+                  amount: parsedAmount,
+                  account: acc,
+                  type: tType,
+                  date: new Date().toISOString()
+                };
+
+                const storedTransactions = JSON.parse(window.localStorage.getItem('fin_transactions_v2') || '[]');
+                const updatedTransactions = [newTx, ...storedTransactions];
+
+                window.localStorage.setItem('fin_transactions_v2', JSON.stringify(updatedTransactions));
+                setTransactions(updatedTransactions);
+
+                showToast(`Sucesso! ${desc} (${formatCurrency(parsedAmount)}) no ${acc}`);
+              }
+            }
+          }
+        } catch (error) {
+          console.error('Erro ao processar comando da Siri com a IA:', error);
+          showToast('Erro ao comunicar com a FinIA.');
+        }
+
+        window.history.replaceState({}, document.title, window.location.pathname);
+      };
+
+      processarComandoViaSiri();
+    }
+  }, []);
+  
+  // --- Derived State (Balances) ---
+  const getBalance = (account) => {
+    return transactions
+      .filter(t => account === 'Total' || t.account === account)
+      .reduce((acc, curr) => curr.type === 'income' ? acc + curr.amount : acc - curr.amount, 0);
+  };
+
+  const totalBalance = getBalance('Total');
+  const nubankBalance = getBalance('Nubank');
+  const interBalance = getBalance('Inter');
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-50 flex justify-center font-sans selection:bg-purple-500/30">
@@ -379,7 +378,7 @@ Regras:
             <PieChart size={22} strokeWidth={activeTab === 'analytics' ? 2.5 : 2} />
             <span className="text-[10px] font-medium">Gráficos</span>
           </button>
-          
+           
           <div className="relative -top-6 flex-1 flex justify-center">
             <button 
               onClick={() => setActiveTab('assistant')}
@@ -415,8 +414,8 @@ Regras:
             <p className="flex-1">{toastMessage}</p>
           </div>
         )}
-      </div>
     </div>
+  </div>
   );
 }
 
@@ -1085,39 +1084,39 @@ function Analytics({ transactions }) {
             </p>
           </div>
           <p className="text-sm font-bold text-neutral-400">{percentSpent.toFixed(0)}% gasto</p>
-        </div>
+      </div>
 
-        <div className="h-4 w-full bg-neutral-950 rounded-full overflow-hidden mt-4 border border-neutral-800">
-          <div 
-            className={`h-full ${progressColor} rounded-full transition-all duration-1000 ease-out`}
-            style={{ width: `${percentSpent}%` }}
-          />
-        </div>
-        
-        {monthlyIncome === 0 && (
-          <p className="text-xs text-neutral-500 mt-4 text-center">
-            Adicione uma receita (Entrada) para ver seu orçamento.
-          </p>
+      <div className="h-4 w-full bg-neutral-950 rounded-full overflow-hidden mt-4 border border-neutral-800">
+        <div 
+          className={`h-full ${progressColor} rounded-full transition-all duration-1000 ease-out`}
+          style={{ width: `${percentSpent}%` }}
+        />
+      </div>
+      
+      {monthlyIncome === 0 && (
+        <p className="text-xs text-neutral-500 mt-4 text-center">
+          Adicione uma receita (Entrada) para ver seu orçamento.
+        </p>
+      )}
+    </div>
+
+    <div>
+      <h3 className="text-sm font-bold text-neutral-300 mb-3 ml-1">Onde você gastou esse mês</h3>
+      <div className="space-y-2">
+        {monthlyTx.filter(t => t.type === 'expense').length === 0 ? (
+          <p className="text-xs text-neutral-500 text-center py-4 bg-neutral-900 rounded-2xl">Nenhum gasto registrado este mês.</p>
+        ) : (
+          monthlyTx.filter(t => t.type === 'expense').map(tx => (
+            <div key={tx.id} className="flex justify-between items-center p-3 bg-neutral-900/50 rounded-xl border border-neutral-800">
+              <span className="text-sm text-neutral-200">{tx.description}</span>
+              <span className="text-sm font-bold text-rose-400">-{formatCurrency(tx.amount)}</span>
+            </div>
+          ))
         )}
       </div>
-
-      <div>
-        <h3 className="text-sm font-bold text-neutral-300 mb-3 ml-1">Onde você gastou esse mês</h3>
-        <div className="space-y-2">
-          {monthlyTx.filter(t => t.type === 'expense').length === 0 ? (
-            <p className="text-xs text-neutral-500 text-center py-4 bg-neutral-900 rounded-2xl">Nenhum gasto registrado este mês.</p>
-          ) : (
-            monthlyTx.filter(t => t.type === 'expense').map(tx => (
-              <div key={tx.id} className="flex justify-between items-center p-3 bg-neutral-900/50 rounded-xl border border-neutral-800">
-                <span className="text-sm text-neutral-200">{tx.description}</span>
-                <span className="text-sm font-bold text-rose-400">-{formatCurrency(tx.amount)}</span>
-              </div>
-            ))
-          )}
-        </div>
-      </div>
-
     </div>
+
+  </div>
   );
 }
 
@@ -1135,7 +1134,7 @@ function SettingsModal({ settings, setSettings, onClose, onSimulateMonth }) {
       
       <div className="bg-neutral-900 w-full rounded-t-[32px] p-6 pb-10 shadow-2xl relative z-10 animate-in slide-in-from-bottom-full duration-300 max-h-[85vh] overflow-y-auto">
         <div className="w-12 h-1.5 bg-neutral-800 rounded-full mx-auto mb-6"></div>
-        
+         
         <div className="flex justify-between items-center mb-6">
           <h2 className="text-xl font-bold">Configurações</h2>
           <button onClick={onClose} className="w-8 h-8 bg-neutral-800 rounded-full flex items-center justify-center text-neutral-400">
@@ -1146,7 +1145,7 @@ function SettingsModal({ settings, setSettings, onClose, onSimulateMonth }) {
         <div className="space-y-6">
           <div className="space-y-4 bg-neutral-950 p-4 rounded-2xl border border-neutral-800">
             <h3 className="text-sm font-bold text-neutral-400 uppercase tracking-wider mb-2">Rendas Mensais Fixas</h3>
-            
+             
             <div>
               <label className="text-xs font-medium text-neutral-500 block mb-1">Salário (Cai no 5º dia útil)</label>
               <div className="flex gap-2">
@@ -1201,8 +1200,8 @@ function SettingsModal({ settings, setSettings, onClose, onSimulateMonth }) {
             </p>
           </div>
         </div>
-      </div>
     </div>
+  </div>
   );
 }
 
@@ -1289,7 +1288,7 @@ FORMATO DO JSON DE RESPOSTA (retorne obrigatoriamente no final se houver ação 
         }
       };
 
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=SUA_CHAVE`, {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -1410,9 +1409,9 @@ FORMATO DO JSON DE RESPOSTA (retorne obrigatoriamente no final se houver ação 
             className="p-3 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 disabled:bg-neutral-800 disabled:text-neutral-500 text-white rounded-xl transition-colors"
           >
             <Send size={18} />
-          </button>
-        </div>
+        </button>
       </div>
     </div>
+  </div>
   );
 }
