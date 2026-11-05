@@ -1162,31 +1162,43 @@ const handleSend = async (textToProcess) => {
       let reply = "Entendido! Como posso ajudar mais com suas finanças?";
       const lower = text.toLowerCase();
 
-      // Tenta extrair um valor numérico da frase (ex: "gastei 50", "comprei por 45.90")
+      // 1. Identificar o valor (procura por números, ex: "10", "10,50", "10.00")
       const numberMatch = text.match(/(?:r\$\s*)?(\d+([.,]\d{2})?)/);
       const amount = numberMatch ? parseFloat(numberMatch[1].replace(',', '.')) : null;
 
+      // 2. Identificar o banco (procura por "inter" ou "nubank/nu")
+      let account = 'Nubank'; // Padrão
+      if (lower.includes('inter')) {
+        account = 'Inter';
+      } else if (lower.includes('nubank') || lower.includes('nu')) {
+        account = 'Nubank';
+      }
+
       if ((lower.includes('gastei') || lower.includes('comprei') || lower.includes('paguei')) && amount) {
-        // Remove palavras comuns para deixar a descrição limpa
+        // 3. Limpar a descrição removendo comandos, valores e o nome do banco
         let description = text
-          .replace(/gastei|comprei|paguei|r\$|\d+([.,]\d{2})?/gi, '')
+          .replace(/gastei|comprei|paguei|no|na|do|da|de|reais|real|r\$|\d+([.,]\d{2})?/gi, '')
+          .replace(/inter|nubank|nu/gi, '')
+          .replace(/\s+/g, ' ')
           .trim();
         
         description = description ? description.charAt(0).toUpperCase() + description.slice(1) : 'Gasto via FinIA';
 
-        // Adiciona a transação real na aplicação
-        addTransaction(description, amount, 'Nubank', 'expense');
-        reply = `Pronto! Registrei a saída de ${formatCurrency(amount)} (${description}) no seu Nubank. Você já pode conferir no Início e nos Gráficos!`;
+        // Adiciona a transação com os dados separados corretamente
+        addTransaction(description, amount, account, 'expense');
+        reply = `Pronto! Registrei a saída de ${formatCurrency(amount)} em "${description}" na sua conta do ${account}. Já pode conferir no Início e nos Gráficos!`;
       } 
       else if ((lower.includes('ganhei') || lower.includes('recebi') || lower.includes('salário')) && amount) {
         let description = text
-          .replace(/ganhei|recebi|salário|r\$|\d+([.,]\d{2})?/gi, '')
+          .replace(/ganhei|recebi|salário|no|na|do|da|de|reais|real|r\$|\d+([.,]\d{2})?/gi, '')
+          .replace(/inter|nubank|nu/gi, '')
+          .replace(/\s+/g, ' ')
           .trim();
         
         description = description ? description.charAt(0).toUpperCase() + description.slice(1) : 'Entrada via FinIA';
 
-        addTransaction(description, amount, 'Nubank', 'income');
-        reply = `Receita de ${formatCurrency(amount)} (${description}) adicionada com sucesso!`;
+        addTransaction(description, amount, account, 'income');
+        reply = `Receita de ${formatCurrency(amount)} (${description}) adicionada no ${account} com sucesso!`;
       }
       else if (lower.includes('saldo')) {
         reply = `Seu saldo total atual é de ${formatCurrency(balances.total)} (Nubank: ${formatCurrency(balances.nubank)} | Inter: ${formatCurrency(balances.inter)}).`;
