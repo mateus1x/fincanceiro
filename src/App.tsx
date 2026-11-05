@@ -112,27 +112,33 @@ export default function App() {
     }
   };
 
-  // --- Integração com a Siri (Lê e processa perfeitamente o parâmetro ?texto= da URL) ---
+// --- Integração com a Siri (Lê e processa perfeitamente o parâmetro ?texto= da URL) ---
   useEffect(() => {
     const queryParams = new URLSearchParams(window.location.search);
     const textoParam = queryParams.get('texto');
     
     if (textoParam) {
-      const matchNumeros = textoParam.match(/(\d+([.,]\d+)?)/);
+      // Decodifica o texto da URL caso venha com caracteres codificados (%20, etc)
+      const textoDecodificado = decodeURIComponent(textoParam);
+      
+      // Procura qualquer sequência de números (inteiros ou decimais com vírgula/ponto)
+      const matchNumeros = textoDecodificado.match(/\d+([.,]\d+)?/);
       let valor = 0;
       
-      if (matchNumeros) {
+      if (matchNumeros && matchNumeros[0]) {
+        // Normaliza a vírgula para ponto e converte para float
         valor = parseFloat(matchNumeros[0].replace(',', '.'));
       }
 
-      const descricao = textoParam
+      // Remove o número encontrado e palavras comuns para isolar a descrição
+      const descricao = textoDecodificado
         .replace(matchNumeros ? matchNumeros[0] : '', '')
-        .replace(/reais|real|gastei|comprei|de|por/gi, '')
+        .replace(/reais|real|gastei|comprei|de|por|no|na|um|uma/gi, '')
         .trim();
 
       addTransaction(
         descricao ? descricao.charAt(0).toUpperCase() + descricao.slice(1) : 'Gasto via Siri', 
-        valor || 0, 
+        valor > 0 ? valor : 0, 
         'Nubank', 
         'expense'
       );
