@@ -114,8 +114,7 @@ export default function App() {
 
 
 
-
-  // --- Integração da Siri com a IA (FinIA) ---
+// --- Integração da Siri com a IA (FinIA) ---
   useEffect(() => {
     const queryParams = new URLSearchParams(window.location.search);
     const textoParam = queryParams.get('texto');
@@ -123,12 +122,11 @@ export default function App() {
     if (textoParam) {
       const textoDecodificado = decodeURIComponent(textoParam);
       
-      // Função assíncrona para pedir à IA que interprete o comando da Siri
       const processarComandoViaSiri = async () => {
         showToast('FinIA a processar comando da Siri...');
         
         const systemPrompt = `Você é a FinIA, uma assistente financeira. O usuário enviou o seguinte comando por voz através da Siri: "${textoDecodificado}".
-Analise o texto e extraia os dados para registrar a movimentação financeira.
+Analise o texto e extraia os dados exatos para registrar a movimentação financeira.
 Retorne obrigatoriamente um bloco de código JSON no final com este formato exato:
 \`\`\`json
 {
@@ -139,7 +137,10 @@ Retorne obrigatoriamente um bloco de código JSON no final com este formato exat
   "type": "expense" ou "income"
 }
 \`\`\`
-Se o banco não for citado explicitamente, use "Nubank" como padrão. Se for ganho/salário/recebimento, use "income", caso contrário use "expense".`;
+Regras:
+- "amount" DEVE ser um número decimal válido (ex: 20.00, 45.50). Nunca retorne zero.
+- Se o banco não for citado explicitamente, use "Nubank".
+- Se for ganho/salário/recebimento, type é "income", caso contrário "expense".`;
 
         try {
           const payload = {
@@ -158,22 +159,41 @@ Se o banco não for citado explicitamente, use "Nubank" como padrão. Se for gan
           const aiResponse = data.candidates?.[0]?.content?.parts?.[0]?.text;
 
           if (aiResponse) {
-            const jsonMatch = aiResponse.match(/```json\n([\s\S]*?)\n```/);
+            const jsonMatch = aiResponse.match(/```json\n([\s\S]*?)\n```/) || aiResponse.match(/{[\s\S]*}/);
             
             if (jsonMatch) {
-              const actionData = JSON.parse(jsonMatch[1]);
+              const jsonString = jsonMatch[1] || jsonMatch[0];
+              const actionData = JSON.parse(jsonString);
               
               if (actionData.action === 'add_transaction' && actionData.amount > 0) {
-                addTransaction(
-                  actionData.description || 'Gasto via Siri', 
-                  actionData.amount, 
-                  actionData.account || 'Nubank', 
-                  actionData.type || 'expense'
-                );
-                showToast(`Sucesso! ${actionData.description} (${formatCurrency(actionData.amount)}) no ${actionData.account || 'Nubank'}`);
+                // Gravação direta no localStorage e atualização de estado garantida
+                const parsedAmount = parseFloat(actionData.amount);
+                const desc = actionData.description || 'Gasto via Siri';
+                const acc = actionData.account || 'Nubank';
+                const tType = actionData.type || 'expense';
+
+                const newTx = {
+                  id: crypto.randomUUID(),
+                  description: desc,
+                  amount: parsedAmount,
+                  account: acc,
+                  type: tType,
+                  date: new Date().toISOString()
+                };
+
+                // Atualiza o estado das transações preservando o que já existe
+                setTransactions(prev => {
+                  const updated = [newTx, ...prev];
+                  window.localStorage.setItem('fin_transactions_v2', JSON.stringify(updated));
+                  return updated;
+                });
+
+                showToast(`Sucesso! ${desc} (${formatCurrency(parsedAmount)}) no ${acc}`);
               } else {
                 showToast('A IA não conseguiu identificar o valor corretamente.');
               }
+            } else {
+              showToast('A IA não retornou o formato esperado.');
             }
           }
         } catch (error) {
@@ -188,7 +208,6 @@ Se o banco não for citado explicitamente, use "Nubank" como padrão. Se for gan
       processarComandoViaSiri();
     }
   }, []);
-
   
   // --- Derived State (Balances) ---
   const getBalance = (account) => {
