@@ -1159,52 +1159,118 @@ const handleSend = async (textToProcess) => {
     setIsLoading(true);
 
     setTimeout(() => {
-      let reply = "Entendido! Como posso ajudar mais com suas finanças?";
+      let reply = "";
       const lower = text.toLowerCase();
 
-      // 1. Identificar o valor (procura por números, ex: "10", "10,50", "10.00")
-      const numberMatch = text.match(/(?:r\$\s*)?(\d+([.,]\d{2})?)/);
+      // 1. Verificar se o utilizador está a pedir saldo
+      if (lower.includes('saldo')) {
+        reply = `Seu saldo total atual é de ${formatCurrency(balances.total)} (Nubank: ${formatCurrency(balances.nubank)} | Inter: ${formatCurrency(balances.inter)}).`;
+        setChatMessages([...newMessages, { role: 'model', text: reply }]);
+        setIsLoading(false);
+        return;
+      }
+
+      // 2. Verificar se o utilizador está a falar de investimentos/caixinhas
+      if (lower.includes('investimento') || lower.includes('caixinha')) {
+        reply = "Suas caixinhas estão ativas. Vá até a aba 'Caixinhas' para gerenciar!";
+        setChatMessages([...newMessages, { role: 'model', text: reply }]);
+        setIsLoading(false);
+        return;
+      }
+
+      // --- MEMÓRIA CONVERSACIONAL INTELIGENTE ---
+      // Verificamos se a última mensagem do assistente foi uma pergunta pendente (ex: falta o banco ou o nome)
+      const lastAssistantMsg = chatMessages.slice().reverse().find(m => m.role === 'model')?.text || "";
+      
+      // Se a IA perguntou anteriormente qual era o banco e o utilizador respondeu agora
+      if (lastAssistantMsg.includes('Qual o banco') || lastAssistantMsg.includes('Nubank ou Inter')) {
+        // Vamos buscar a última transação temporária ou pendente e concluir com o banco informado
+        let account = 'Nubank';
+        if (/\b(inter)\b/i.test(text)) account = 'Inter';
+        if (/\b(nubank|nu)\b/i.test(text)) account = 'Nubank';
+
+        // Recupera o valor e descrição da mensagem anterior do utilizador
+        const prevUserMsg = chatMessages.filter(m => m.role === 'user').slice(-2)[0]?.text || text;
+        const numberMatch = prevUserMsg.match(/(?:r\$\s*)?(\d+([.,]\d{1,2})?)/);
+        const amount = numberMatch ? parseFloat(numberMatch[1].replace(',', '.')) : 10;
+        
+        let description = prevUserMsg
+          .replace(/(?:r\$\s*)?\d+([.,]\d{1,2})?/gi, '')
+          .replace(/\b(no|na|do|da|de|em|reais|real|r\$)\b/gi, '')
+          .replace(/\s+/g, ' ')
+          .trim();
+        description = description ? description.charAt(0).toUpperCase() + description.slice(1) : 'Gasto Geral';
+
+        addTransaction(description, amount, account, 'expense');
+        reply = `Perfeito! Registrei ${formatCurrency(amount)} em "${description}" na conta do ${account}.`;
+        
+        setChatMessages([...newMessages, { role: 'model', text: reply }]);
+        setIsLoading(false);
+        return;
+      }
+
+      // 3. EXTRAÇÃO INTELIGENTE DO VALOR DA FRASE ATUAL
+      const numberMatch = text.match(/(?:r\$\s*)?(\d+([.,]\d{1,2})?)/);
       const amount = numberMatch ? parseFloat(numberMatch[1].replace(',', '.')) : null;
 
-      // 2. Identificar o banco (procura por "inter" ou "nubank/nu")
-      let account = 'Nubank'; // Padrão
-      if (lower.includes('inter')) {
-        account = 'Inter';
-      } else if (lower.includes('nubank') || lower.includes('nu')) {
-        account = 'Nubank';
+      // Se o utilizador digitou uma transação mas NÃO informou o valor
+      if (!amount && (/\b(gastei|paguei|comprei|recebi|ganhei)\b/i.test(text) || text.length > 3)) {
+        reply = "Entendi que quer registar uma movimentação, mas faltou informar o **valor** (ex: R$ 50). Quanto foi?";
+        setChatMessages([...newMessages, { role: 'model', text: reply }]);
+        setIsLoading(false);
+        return;
       }
 
-      if ((lower.includes('gastei') || lower.includes('comprei') || lower.includes('paguei')) && amount) {
-        // 3. Limpar a descrição removendo comandos, valores e o nome do banco
+      if (amount) {
+        // Identificação do Banco por contexto
+        let account = null;
+        if (/\b(inter|banco inter)\b/i.test(text)) {
+          account = 'Inter';
+        } else if (/\b(nubank|nu)\b/i.test(text)) {
+          account = 'Nubank';
+        }
+
+        // Identificação do Tipo (Entrada vs Saída)
+        const isIncome = /\b(recebi|ganhei|entrou|caiu|salario|salário|pix de|deposito)\b/i.test(text) && 
+                         !/\b(gastei|paguei|comprei|mandei)\b/i.test(text);
+        const type = isIncome ? 'income' : 'expense';
+
+        // Extração da Descrição
         let description = text
-          .replace(/gastei|comprei|paguei|no|na|do|da|de|reais|real|r\$|\d+([.,]\d{2})?/gi, '')
-          .replace(/inter|nubank|nu/gi, '')
+          .replace(/(?:r\$\s*)?\d+([.,]\d{1,2})?/gi, '')
+          .replace(/\b(no|na|do|da|de|em|pela|pelo|reais|real|r\$)\b/gi, '')
+          .replace(/\b(inter|nubank|nu)\b/gi, '')
           .replace(/\s+/g, ' ')
           .trim();
-        
-        description = description ? description.charAt(0).toUpperCase() + description.slice(1) : 'Gasto via FinIA';
 
-        // Adiciona a transação com os dados separados corretamente
-        addTransaction(description, amount, account, 'expense');
-        reply = `Pronto! Registrei a saída de ${formatCurrency(amount)} em "${description}" na sua conta do ${account}. Já pode conferir no Início e nos Gráficos!`;
-      } 
-      else if ((lower.includes('ganhei') || lower.includes('recebi') || lower.includes('salário')) && amount) {
-        let description = text
-          .replace(/ganhei|recebi|salário|no|na|do|da|de|reais|real|r\$|\d+([.,]\d{2})?/gi, '')
-          .replace(/inter|nubank|nu/gi, '')
-          .replace(/\s+/g, ' ')
-          .trim();
-        
-        description = description ? description.charAt(0).toUpperCase() + description.slice(1) : 'Entrada via FinIA';
+        // 4. VALIDAÇÃO DE DADOS EM FALTA (O pulo do gato da IA inteligente)
+        // Se o utilizador disse o valor e o banco, mas esqueceu o O QUÊ (descrição)
+        if (!description || description.length < 2) {
+          reply = `Certo, ${formatCurrency(amount)}. Mas **o que foi** essa compra/gasto? (ex: Almoço, Uber, Mercado...)`;
+          setChatMessages([...newMessages, { role: 'model', text: reply }]);
+          setIsLoading(false);
+          return;
+        }
 
-        addTransaction(description, amount, account, 'income');
-        reply = `Receita de ${formatCurrency(amount)} (${description}) adicionada no ${account} com sucesso!`;
-      }
-      else if (lower.includes('saldo')) {
-        reply = `Seu saldo total atual é de ${formatCurrency(balances.total)} (Nubank: ${formatCurrency(balances.nubank)} | Inter: ${formatCurrency(balances.inter)}).`;
-      } 
-      else if (lower.includes('investimento') || lower.includes('caixinha')) {
-        reply = "Suas caixinhas estão ativas. Vá até a aba 'Caixinhas' para ver os detalhes e resgates!";
+        // Se o utilizador disse o valor e o que comprou, mas **esqueceu de dizer o banco**
+        if (!account) {
+          reply = `Compreendido! ${formatCurrency(amount)} em "${description.charAt(0).toUpperCase() + description.slice(1)}". Qual o banco? **Nubank** ou **Inter**?`;
+          setChatMessages([...newMessages, { role: 'model', text: reply }]);
+          setIsLoading(false);
+          return;
+        }
+
+        // Se tem tudo (Valor, Descrição e Banco), executa a acção com perfeição!
+        description = description.charAt(0).toUpperCase() + description.slice(1);
+        addTransaction(description, amount, account, type);
+
+        if (type === 'expense') {
+          reply = `Feito! Registrei a saída de ${formatCurrency(amount)} em "${description}" usando o ${account}.`;
+        } else {
+          reply = `Registrado com sucesso! Entrada de ${formatCurrency(amount)} (${description}) no ${account}.`;
+        }
+      } else {
+        reply = "Pode me dizer o gasto ou ganho de forma natural (ex: *gastei 45 no inter com mercado*), que eu registro para você!";
       }
 
       setChatMessages([...newMessages, { role: 'model', text: reply }]);
