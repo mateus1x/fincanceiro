@@ -1149,7 +1149,7 @@ function Assistant({ transactions, investments, balances, addTransaction, setInv
     recognition.start();
   };
 
-  const handleSend = async (textToProcess) => {
+const handleSend = async (textToProcess) => {
     const text = typeof textToProcess === 'string' ? textToProcess : input;
     if (!text.trim()) return;
 
@@ -1158,17 +1158,41 @@ function Assistant({ transactions, investments, balances, addTransaction, setInv
     setInput('');
     setIsLoading(true);
 
-    // Simulação local inteligente (sem depender de chave de API externa que estava travando)
     setTimeout(() => {
       let reply = "Entendido! Como posso ajudar mais com suas finanças?";
       const lower = text.toLowerCase();
 
-      if (lower.includes('gastei') || lower.includes('comprei')) {
-        reply = "Registrei essa movimentação para você.";
-      } else if (lower.includes('saldo')) {
+      // Tenta extrair um valor numérico da frase (ex: "gastei 50", "comprei por 45.90")
+      const numberMatch = text.match(/(?:r\$\s*)?(\d+([.,]\d{2})?)/);
+      const amount = numberMatch ? parseFloat(numberMatch[1].replace(',', '.')) : null;
+
+      if ((lower.includes('gastei') || lower.includes('comprei') || lower.includes('paguei')) && amount) {
+        // Remove palavras comuns para deixar a descrição limpa
+        let description = text
+          .replace(/gastei|comprei|paguei|r\$|\d+([.,]\d{2})?/gi, '')
+          .trim();
+        
+        description = description ? description.charAt(0).toUpperCase() + description.slice(1) : 'Gasto via FinIA';
+
+        // Adiciona a transação real na aplicação
+        addTransaction(description, amount, 'Nubank', 'expense');
+        reply = `Pronto! Registrei a saída de ${formatCurrency(amount)} (${description}) no seu Nubank. Você já pode conferir no Início e nos Gráficos!`;
+      } 
+      else if ((lower.includes('ganhei') || lower.includes('recebi') || lower.includes('salário')) && amount) {
+        let description = text
+          .replace(/ganhei|recebi|salário|r\$|\d+([.,]\d{2})?/gi, '')
+          .trim();
+        
+        description = description ? description.charAt(0).toUpperCase() + description.slice(1) : 'Entrada via FinIA';
+
+        addTransaction(description, amount, 'Nubank', 'income');
+        reply = `Receita de ${formatCurrency(amount)} (${description}) adicionada com sucesso!`;
+      }
+      else if (lower.includes('saldo')) {
         reply = `Seu saldo total atual é de ${formatCurrency(balances.total)} (Nubank: ${formatCurrency(balances.nubank)} | Inter: ${formatCurrency(balances.inter)}).`;
-      } else if (lower.includes('investimento') || lower.includes('caixinha')) {
-        reply = "Suas caixinhas estão ativas e rendendo bem!";
+      } 
+      else if (lower.includes('investimento') || lower.includes('caixinha')) {
+        reply = "Suas caixinhas estão ativas. Vá até a aba 'Caixinhas' para ver os detalhes e resgates!";
       }
 
       setChatMessages([...newMessages, { role: 'model', text: reply }]);
