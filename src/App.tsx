@@ -149,7 +149,7 @@ Regras:
             generationConfig: { temperature: 0.1 }
           };
 
-          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=AQ.Ab8RN6KEvfcHYTFfE9tGW_68qIM50oMiELAJnCuqg7qeodvSlQ`, {
+          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=A_TUA_CHAVE_AQUI`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
@@ -166,12 +166,12 @@ Regras:
               const actionData = JSON.parse(jsonString);
               
               if (actionData.action === 'add_transaction' && actionData.amount > 0) {
-                // Gravação direta no localStorage e atualização de estado garantida
                 const parsedAmount = parseFloat(actionData.amount);
                 const desc = actionData.description || 'Gasto via Siri';
                 const acc = actionData.account || 'Nubank';
                 const tType = actionData.type || 'expense';
 
+                // Criar nova transação
                 const newTx = {
                   id: crypto.randomUUID(),
                   description: desc,
@@ -181,19 +181,16 @@ Regras:
                   date: new Date().toISOString()
                 };
 
-                // Atualiza o estado das transações preservando o que já existe
-                setTransactions(prev => {
-                  const updated = [newTx, ...prev];
-                  window.localStorage.setItem('fin_transactions_v2', JSON.stringify(updated));
-                  return updated;
-                });
+                // Pega transações atuais diretamente do localStorage para garantir que não perde nada
+                const storedTransactions = JSON.parse(window.localStorage.getItem('fin_transactions_v2') || '[]');
+                const updatedTransactions = [newTx, ...storedTransactions];
+
+                // Salva no localStorage e força atualização do estado do React
+                window.localStorage.setItem('fin_transactions_v2', JSON.stringify(updatedTransactions));
+                setTransactions(updatedTransactions);
 
                 showToast(`Sucesso! ${desc} (${formatCurrency(parsedAmount)}) no ${acc}`);
-              } else {
-                showToast('A IA não conseguiu identificar o valor corretamente.');
               }
-            } else {
-              showToast('A IA não retornou o formato esperado.');
             }
           }
         } catch (error) {
