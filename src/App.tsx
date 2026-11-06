@@ -21,7 +21,8 @@ import {
   Trash2
 } from 'lucide-react';
 
-// --- Custom Hook for Local Storage ---
+// --- Custom Hook for Local Storage --
+
 function useLocalStorage(key, initialValue) {
   const [storedValue, setStoredValue] = useState(() => {
     try {
