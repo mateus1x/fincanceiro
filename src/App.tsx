@@ -109,14 +109,16 @@ export default function App() {
           if (textoDitado) {
             const textoLower = textoDitado.toLowerCase();
             
-            // 1. Identifica se é entrada (recebimento/lucro) ou saída (gasto)
+            // 1. Identificação RIGOROSA de Entrada vs Saída
             const isIncome = textoLower.includes('recebi') || 
                              textoLower.includes('ganhei') || 
                              textoLower.includes('caiu') || 
                              textoLower.includes('lucro') || 
+                             textoLower.includes('salario') ||
+                             textoLower.includes('salário') ||
                              textoLower.includes('entrada');
 
-            // 2. Identifica o banco mencionado
+            // 2. Identificação do Banco
             let banco = 'Nubank';
             if (textoLower.includes('inter')) {
               banco = 'Inter';
@@ -124,16 +126,16 @@ export default function App() {
               banco = 'Nubank';
             }
 
-            // 3. Extrai o valor numérico
+            // 3. Extração do Valor
             const matchNumeros = textoDitado.match(/(\d+([.,]\d+)?)/);
             let valor = 0;
             if (matchNumeros) valor = parseFloat(matchNumeros[0].replace(',', '.'));
 
-            // 4. Limpeza inteligente da descrição (remove o banco, valores e palavras de comando)
+            // 4. Limpeza da Descrição (Remove o banco, valores e palavras de comando)
             let descricao = textoDitado
               .replace(matchNumeros ? matchNumeros[0] : '', '')
               .replace(/banco\s*inter|inter|nubank|nu/gi, '')
-              .replace(/reais|real|gastei|comprei|recebi|ganhei|caiu|lucro|no|na|de|por|um|uma/gi, '')
+              .replace(/reais|real|gastei|comprei|recebi|ganhei|caiu|lucro|salario|salário|no|na|de|por|um|uma/gi, '')
               .trim();
 
             if (!descricao || descricao.length < 2) {
@@ -144,6 +146,7 @@ export default function App() {
 
             const tipoTx = isIncome ? 'income' : 'expense';
 
+            // ATENÇÃO: Passando explicitamente o tipo correto ('income' ou 'expense')
             addTransaction(descricao, valor || 0, banco, tipoTx);
             
             showToast(`Siri registrou em ${banco}: ${isIncome ? '+' : '-'}${formatCurrency(valor)} (${descricao})`);
@@ -175,7 +178,7 @@ export default function App() {
       description,
       amount: parsedAmount,
       account,
-      type,
+      type, // Garantido que salva 'income' ou 'expense' corretamente
       date: new Date().toISOString()
     };
     
