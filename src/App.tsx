@@ -140,10 +140,11 @@ export default function App() {
       // 3. Identificação do Tipo (Gasto vs Entrada/Ganho)
       const type = (lower.includes('recebi') || lower.includes('ganhei') || lower.includes('pagaram') || lower.includes('entrou')) ? 'income' : 'expense';
 
-      // 4. Limpeza da Descrição (Remoção de ruídos da fala natural da Siri)
+      // 4. Limpeza Inteligente da Descrição (Remoção avançada de preposições e ruídos da fala)
       let description = siriText
         .replace(matchNum ? matchNum[0] : '', '')
-        .replace(/(gastei|comprei|paguei|recebi|ganhei|reais|real|conto|no|na|app|banco|da|do|nubank|inter|com|em|um|uma|pra)/gi, '')
+        .replace(/(gastei|comprei|paguei|recebi|ganhei|reais|real|conto|no|na|app|banco|da|do|dos|das|de|di|com|em|um|uma|pra|para|por|nubank|inter)/gi, ' ')
+        .replace(/\s+/g, ' ')
         .trim();
 
       description = description ? description.charAt(0).toUpperCase() + description.slice(1) : 'Gasto via Siri';
@@ -250,12 +251,12 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-neutral-950 text-neutral-50 flex justify-center font-sans selection:bg-purple-500/30">
-      <div className="w-full max-w-md bg-neutral-950 flex flex-col relative shadow-2xl overflow-hidden">
+    <div className="h-screen w-full bg-neutral-950 text-neutral-50 flex justify-center font-sans selection:bg-purple-500/30 overflow-hidden">
+      <div className="w-full max-w-md h-full bg-neutral-950 flex flex-col relative shadow-2xl overflow-hidden">
         
-        {/* Header - Escondido na aba Visual IA para usar todo o espaço */}
+        {/* Header Fixo */}
         {activeTab !== 'visual' && (
-          <header className="px-5 pt-8 pb-4 flex justify-between items-center bg-neutral-950 sticky top-0 z-20">
+          <header className="px-5 pt-8 pb-4 flex justify-between items-center bg-neutral-950/90 backdrop-blur-md sticky top-0 z-30 shrink-0 border-b border-neutral-900">
             <div className="flex items-center gap-4">
               <button onClick={() => changeMonth(-1)} className="w-8 h-8 rounded-full bg-neutral-900 flex items-center justify-center text-neutral-400 hover:text-white transition-colors">
                 <ChevronLeft size={18} />
@@ -279,14 +280,15 @@ export default function App() {
           </header>
         )}
 
-        {/* Main Content Area */}
+        {/* Main Content Area - Apenas este container ROLA */}
         {activeTab === 'visual' ? (
            <VisualIA 
              balances={{ total: totalBalance, nubank: nubankBalance, inter: interBalance }}
              addTransaction={addTransaction}
+             showToast={showToast}
            />
         ) : (
-          <main className="flex-1 overflow-y-auto pb-24 px-5 no-scrollbar space-y-6">
+          <main className="flex-1 overflow-y-auto px-5 pt-4 pb-28 no-scrollbar space-y-6">
             
             {activeTab === 'dashboard' && (
               <Dashboard 
@@ -321,8 +323,8 @@ export default function App() {
           </main>
         )}
 
-        {/* Bottom Navigation */}
-        <nav className="absolute bottom-0 w-full bg-neutral-900/80 backdrop-blur-md border-t border-neutral-800 flex justify-around items-center h-20 px-1 z-20">
+        {/* Bottom Navigation Fixo */}
+        <nav className="absolute bottom-0 left-0 w-full bg-neutral-900/95 backdrop-blur-xl border-t border-neutral-800 flex justify-around items-center h-20 px-1 z-30 shrink-0">
           <button 
             onClick={() => setActiveTab('dashboard')}
             className={`flex flex-col items-center gap-1 transition-colors ${activeTab === 'dashboard' ? 'text-white' : 'text-neutral-500'} flex-1`}
@@ -381,14 +383,15 @@ export default function App() {
 }
 
 // ==========================================
-// VISUAL IA COMPONENT (CANVAS)
+// VISUAL IA COMPONENT (CANVAS + VOZ)
 // ==========================================
 
-function VisualIA({ balances, addTransaction }) {
+function VisualIA({ balances, addTransaction, showToast }) {
   const containerRef = useRef(null);
   const canvasRef = useRef(null);
   const [input, setInput] = useState('');
   const [logs, setLogs] = useState([]);
+  const [isListening, setIsListening] = useState(false);
   
   const stateRef = useRef({
     width: 0,
@@ -417,35 +420,56 @@ function VisualIA({ balances, addTransaction }) {
     let amount = matchNumeros ? parseFloat(matchNumeros[0].replace(',', '.')) : 0;
 
     let account = lowerText.includes('inter') || lowerText.includes('laranjinha') ? 'Inter' : 'Nubank';
-    let type = (lowerText.includes('recebi') || lowerText.includes('ganhei') || lowerText.includes('pagaram') || lowerText.includes('entrou')) ? 'income' : 'expense';
 
+    // Determina o TIPO com suporte a INVESTIMENTO:
+    let type = 'expense';
+    const isInvestment = lowerText.includes('investimento') || lowerText.includes('caixinha') || lowerText.includes('investir') || lowerText.includes('reserva');
+    const isIncome = lowerText.includes('recebi') || lowerText.includes('ganhei') || lowerText.includes('pagaram') || lowerText.includes('entrou') || lowerText.includes('lucro');
+
+    if (isInvestment) {
+      type = 'investment';
+    } else if (isIncome) {
+      type = 'income';
+    } else {
+      type = 'expense';
+    }
+
+    // Sanitização e Limpeza Inteligente para extrair apenas o nome principal do item
     let description = text
         .replace(matchNumeros ? matchNumeros[0] : '', '')
-        .replace(/(gastei|comprei|paguei|recebi|ganhei|reais|real|conto|no|na|da|do|banco|nubank|inter|com|em|um|uma|pra)/gi, '')
+        .replace(/(gastei|comprei|paguei|recebi|ganhei|reais|real|conto|no|na|da|do|dos|das|de|di|com|em|um|uma|pra|para|por|banco|nubank|inter|investir|investimento|caixinha)/gi, ' ')
+        .replace(/\s+/g, ' ')
         .trim();
     
     description = description.charAt(0).toUpperCase() + description.slice(1);
-    if (!description) description = "Transação via IA";
+    if (!description) {
+      description = type === 'investment' ? 'Investimento' : 'Transação via IA';
+    } else if (type === 'investment' && !description.toLowerCase().startsWith('investimento')) {
+      description = `Investimento ${description}`;
+    }
 
     return { action: "add_transaction", description, amount, account, type };
   };
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    if (!input.trim()) return;
+  const processCommand = (commandText) => {
+    if (!commandText.trim()) return;
 
-    const parsedData = simulateAIParse(input);
+    const parsedData = simulateAIParse(commandText);
     setInput('');
     
     if (parsedData.amount <= 0) {
-       setLogs(prev => [{ id: Date.now(), type: 'expense', text: `Erro: Não entendi o valor.` }, ...prev]);
+       setLogs(prev => [{ id: Date.now(), type: 'expense', text: `Erro: Valor não identificado.` }, ...prev]);
        return;
     }
 
     stateRef.current.nodes.core.pulse = 20;
 
     const targetNode = stateRef.current.nodes[parsedData.account];
-    const particleColor = parsedData.type === 'expense' ? '#ef4444' : '#10b981';
+    
+    // Cores: Investimento = Branco, Gasto = Vermelho, Lucro = Verde
+    let particleColor = '#ef4444'; // Gasto (vermelho)
+    if (parsedData.type === 'income') particleColor = '#10b981'; // Lucro (verde)
+    if (parsedData.type === 'investment') particleColor = '#ffffff'; // Investimento (branco)
 
     stateRef.current.particles.push({
         x: stateRef.current.nodes.core.x,
@@ -457,6 +481,36 @@ function VisualIA({ balances, addTransaction }) {
         progress: 0,
         speed: 0.03
     });
+  };
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    processCommand(input);
+  };
+
+  // Suporte a Ditado por Voz nativo
+  const startListening = () => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      if (showToast) showToast('Reconhecimento de voz não suportado neste navegador.');
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.lang = 'pt-BR';
+    recognition.continuous = false;
+    recognition.interimResults = false;
+
+    recognition.onstart = () => setIsListening(true);
+    recognition.onresult = (event) => {
+      const transcript = event.results[0][0].transcript;
+      setInput(transcript);
+      processCommand(transcript);
+    };
+    recognition.onerror = () => setIsListening(false);
+    recognition.onend = () => setIsListening(false);
+
+    recognition.start();
   };
 
   useEffect(() => {
@@ -517,9 +571,14 @@ function VisualIA({ balances, addTransaction }) {
           ctx.shadowBlur = 0;
 
           if (p.progress >= 1) {
-              addTransactionRef.current(p.data.description, p.data.amount, p.data.account, p.data.type);
-              const signal = p.data.type === 'expense' ? '-' : '+';
-              
+              // Registra como gasto normal no banco se for investimento ou expense
+              const txTypeToSave = p.data.type === 'income' ? 'income' : 'expense';
+              addTransactionRef.current(p.data.description, p.data.amount, p.data.account, txTypeToSave);
+
+              let signal = '-';
+              if (p.data.type === 'income') signal = '+';
+              if (p.data.type === 'investment') signal = '📦';
+
               floatingTexts.push({
                   x: p.targetX,
                   y: p.targetY - 30,
@@ -602,7 +661,7 @@ function VisualIA({ balances, addTransaction }) {
   }, []);
 
   return (
-    <div className="flex-1 relative w-full overflow-hidden animate-in fade-in" ref={containerRef}>
+    <div className="flex-1 relative w-full h-full overflow-hidden animate-in fade-in" ref={containerRef}>
       <canvas ref={canvasRef} className="absolute inset-0 z-0 bg-neutral-950" />
       
       <div className="absolute inset-0 z-10 flex flex-col justify-between pointer-events-none p-5 pb-24">
@@ -610,25 +669,40 @@ function VisualIA({ balances, addTransaction }) {
           <h2 className="text-xl font-bold bg-gradient-to-r from-purple-400 to-blue-400 bg-clip-text text-transparent">
              Rede FinIA
           </h2>
-          <p className="text-[11px] text-neutral-400 mt-1">Ex: "gastei 45 no ifood no nubank"</p>
+          <p className="text-[11px] text-neutral-400 mt-1">Ex: "gastei 45 no ifood" | "investimento 100 viagem inter"</p>
         </div>
 
         <div className="flex flex-col gap-4">
-           <div className="pointer-events-auto flex flex-col-reverse gap-2 max-h-32 overflow-y-auto no-scrollbar mask-image-b-fade">
-             {logs.map(log => (
-               <div key={log.id} className={`text-[11px] font-medium px-3 py-2 rounded-xl backdrop-blur-md border border-white/5 animate-in slide-in-from-left-4 ${log.type === 'expense' ? 'bg-rose-500/10 text-rose-300' : 'bg-emerald-500/10 text-emerald-300'}`}>
-                 {log.text}
-               </div>
-             ))}
+           <div className="pointer-events-auto flex flex-col-reverse gap-2 max-h-32 overflow-y-auto no-scrollbar">
+             {logs.map(log => {
+               let badgeColor = 'bg-rose-500/10 text-rose-300 border-rose-500/20'; // Gasto
+               if (log.type === 'income') badgeColor = 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20'; // Lucro
+               if (log.type === 'investment') badgeColor = 'bg-white/10 text-white border-white/20'; // Investimento (Branco)
+
+               return (
+                 <div key={log.id} className={`text-[11px] font-medium px-3 py-2 rounded-xl backdrop-blur-md border animate-in slide-in-from-left-4 ${badgeColor}`}>
+                   {log.text}
+                 </div>
+               );
+             })}
            </div>
 
-           <form onSubmit={handleSubmit} className="pointer-events-auto flex gap-2 bg-neutral-900/80 backdrop-blur-xl p-1.5 rounded-2xl border border-neutral-800 focus-within:border-purple-500/50 shadow-2xl">
+           <form onSubmit={handleSubmit} className="pointer-events-auto flex items-center gap-2 bg-neutral-900/80 backdrop-blur-xl p-1.5 rounded-2xl border border-neutral-800 focus-within:border-purple-500/50 shadow-2xl">
+             <button 
+               type="button"
+               onClick={startListening}
+               className={`p-2.5 rounded-xl transition-all ${isListening ? 'bg-rose-500 text-white animate-pulse' : 'bg-neutral-800 text-neutral-400 hover:text-white'}`}
+               title="Falar comando"
+             >
+               <Mic size={18} />
+             </button>
+
              <input 
                type="text" 
-               placeholder="Comando rápido..."
+               placeholder={isListening ? "Ouvindo você..." : "Digite ou use o microfone..."}
                value={input}
                onChange={(e) => setInput(e.target.value)}
-               className="flex-1 bg-transparent border-none text-white text-sm px-3 focus:outline-none placeholder:text-neutral-500"
+               className="flex-1 bg-transparent border-none text-white text-sm px-2 focus:outline-none placeholder:text-neutral-500"
              />
              <button 
                type="submit"
@@ -1179,7 +1253,7 @@ function Analytics({ transactions }) {
   // Filtros Globais e Avançados
   const [selectedMonth, setSelectedMonth] = useState('all'); // 'all' ou índice '0' a '11'
   const [selectedYear, setSelectedYear] = useState('all');   // 'all' ou string ex '2026'
-  const [filterType, setFilterType] = useState('all');       // 'all' | 'income' | 'expense'
+  const [filterType, setFilterType] = useState('all');       // 'all' | 'income' | 'expense' | 'investment'
   const [filterBank, setFilterBank] = useState('all');       // 'all' | 'Nubank' | 'Inter'
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -1187,12 +1261,20 @@ function Analytics({ transactions }) {
   const availableYears = Array.from(new Set(transactions.map(t => new Date(t.date).getFullYear()))).sort((a,b) => b-a);
   if (availableYears.length === 0) availableYears.push(new Date().getFullYear());
 
+  // Helper para saber se a transação é caixinha/investimento
+  const isInvestmentTx = (t) => t.type === 'expense' && t.description.match(/^investimentos?\s*(.*)/i);
+
   // Aplicar filtros robustos
   const filteredTransactions = transactions.filter(t => {
     const txDate = new Date(t.date);
     const matchesMonth = selectedMonth === 'all' || txDate.getMonth().toString() === selectedMonth;
     const matchesYear = selectedYear === 'all' || txDate.getFullYear().toString() === selectedYear;
-    const matchesType = filterType === 'all' || t.type === filterType;
+    
+    let matchesType = true;
+    if (filterType === 'income') matchesType = t.type === 'income';
+    if (filterType === 'expense') matchesType = t.type === 'expense' && !isInvestmentTx(t);
+    if (filterType === 'investment') matchesType = isInvestmentTx(t);
+
     const matchesBank = filterBank === 'all' || t.account === filterBank;
     const matchesSearch = t.description.toLowerCase().includes(searchTerm.toLowerCase());
 
@@ -1205,32 +1287,40 @@ function Analytics({ transactions }) {
     .reduce((acc, curr) => acc + curr.amount, 0);
 
   const totalFilteredExpense = filteredTransactions
-    .filter(t => t.type === 'expense')
+    .filter(t => t.type === 'expense' && !isInvestmentTx(t))
     .reduce((acc, curr) => acc + curr.amount, 0);
 
-  const netBalance = totalFilteredIncome - totalFilteredExpense;
+  const totalFilteredInvestment = filteredTransactions
+    .filter(t => isInvestmentTx(t))
+    .reduce((acc, curr) => acc + curr.amount, 0);
+
+  const netBalance = totalFilteredIncome - totalFilteredExpense - totalFilteredInvestment;
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-left-4 duration-500">
       
       <div>
         <h2 className="text-xl font-bold text-white mb-1">Extrato & Filtros Avançados</h2>
-        <p className="text-xs text-neutral-400">Consulte receitas, gastos, datas e bancos detalhadamente.</p>
+        <p className="text-xs text-neutral-400">Consulte receitas, gastos, investimentos e bancos detalhadamente.</p>
       </div>
 
       {/* Cards de Resumo dos Filtros Aplicados */}
-      <div className="grid grid-cols-3 gap-2">
-        <div className="bg-neutral-900 rounded-2xl p-3 border border-emerald-500/20">
-          <p className="text-[10px] text-neutral-400 mb-0.5 flex items-center gap-1"><ArrowUpCircle size={12} className="text-emerald-400"/> Entradas</p>
-          <p className="text-xs sm:text-sm font-bold text-emerald-400 truncate">{formatCurrency(totalFilteredIncome)}</p>
+      <div className="grid grid-cols-4 gap-1.5">
+        <div className="bg-neutral-900 rounded-2xl p-2.5 border border-emerald-500/20">
+          <p className="text-[9px] text-neutral-400 mb-0.5 truncate flex items-center gap-0.5"><ArrowUpCircle size={10} className="text-emerald-400"/> Lucros</p>
+          <p className="text-xs font-bold text-emerald-400 truncate">{formatCurrency(totalFilteredIncome)}</p>
         </div>
-        <div className="bg-neutral-900 rounded-2xl p-3 border border-rose-500/20">
-          <p className="text-[10px] text-neutral-400 mb-0.5 flex items-center gap-1"><ArrowDownCircle size={12} className="text-rose-400"/> Gastos</p>
-          <p className="text-xs sm:text-sm font-bold text-rose-400 truncate">{formatCurrency(totalFilteredExpense)}</p>
+        <div className="bg-neutral-900 rounded-2xl p-2.5 border border-rose-500/20">
+          <p className="text-[9px] text-neutral-400 mb-0.5 truncate flex items-center gap-0.5"><ArrowDownCircle size={10} className="text-rose-400"/> Gastos</p>
+          <p className="text-xs font-bold text-rose-400 truncate">{formatCurrency(totalFilteredExpense)}</p>
         </div>
-        <div className="bg-neutral-900 rounded-2xl p-3 border border-neutral-800">
-          <p className="text-[10px] text-neutral-400 mb-0.5">Balanço</p>
-          <p className={`text-xs sm:text-sm font-bold truncate ${netBalance >= 0 ? 'text-white' : 'text-rose-400'}`}>
+        <div className="bg-neutral-900 rounded-2xl p-2.5 border border-white/20">
+          <p className="text-[9px] text-neutral-400 mb-0.5 truncate">Investimentos</p>
+          <p className="text-xs font-bold text-white truncate">{formatCurrency(totalFilteredInvestment)}</p>
+        </div>
+        <div className="bg-neutral-900 rounded-2xl p-2.5 border border-neutral-800">
+          <p className="text-[9px] text-neutral-400 mb-0.5 truncate">Balanço</p>
+          <p className={`text-xs font-bold truncate ${netBalance >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
             {formatCurrency(netBalance)}
           </p>
         </div>
@@ -1296,9 +1386,10 @@ function Analytics({ transactions }) {
             onChange={(e) => setFilterType(e.target.value)}
             className="bg-neutral-950 border border-neutral-800 rounded-xl px-3 py-2.5 text-xs text-neutral-300 focus:outline-none"
           >
-            <option value="all">Entradas e Gastos</option>
-            <option value="income">Apenas Entradas (Lucros)</option>
+            <option value="all">Todos os Tipos</option>
+            <option value="income">Apenas Lucros (Entradas)</option>
             <option value="expense">Apenas Gastos</option>
+            <option value="investment">Apenas Investimentos</option>
           </select>
 
           {/* Filtro por Banco */}
@@ -1328,26 +1419,37 @@ function Analytics({ transactions }) {
               Nenhuma movimentação encontrada com os filtros selecionados.
             </div>
           ) : (
-            filteredTransactions.map(tx => (
-              <div key={tx.id} className="flex justify-between items-center p-3.5 bg-neutral-900 rounded-2xl border border-neutral-800">
-                <div className="flex items-center gap-3">
-                  <div className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${tx.account === 'Nubank' ? 'bg-purple-500/10 text-purple-400' : 'bg-orange-500/10 text-orange-400'}`}>
-                    {tx.account === 'Nubank' ? <Wallet size={16} /> : <Building size={16} />}
+            filteredTransactions.map(tx => {
+              const isInv = isInvestmentTx(tx);
+              let textColor = tx.type === 'expense' ? 'text-rose-400' : 'text-emerald-400';
+              let signal = tx.type === 'expense' ? '-' : '+';
+              
+              if (isInv) {
+                textColor = 'text-white font-bold'; // Investimento fica BRANCO
+                signal = '📦 ';
+              }
+
+              return (
+                <div key={tx.id} className="flex justify-between items-center p-3.5 bg-neutral-900 rounded-2xl border border-neutral-800">
+                  <div className="flex items-center gap-3">
+                    <div className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${tx.account === 'Nubank' ? 'bg-purple-500/10 text-purple-400' : 'bg-orange-500/10 text-orange-400'}`}>
+                      {tx.account === 'Nubank' ? <Wallet size={16} /> : <Building size={16} />}
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-neutral-100">{tx.description}</p>
+                      <p className="text-[10px] text-neutral-500 flex items-center gap-1.5 mt-0.5">
+                        <Calendar size={10} /> {new Date(tx.date).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })} 
+                        <span>•</span> 
+                        <span className="uppercase text-neutral-400 font-medium">{tx.account}</span>
+                      </p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-sm font-semibold text-neutral-100">{tx.description}</p>
-                    <p className="text-[10px] text-neutral-500 flex items-center gap-1.5 mt-0.5">
-                      <Calendar size={10} /> {new Date(tx.date).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })} 
-                      <span>•</span> 
-                      <span className="uppercase text-neutral-400 font-medium">{tx.account}</span>
-                    </p>
-                  </div>
+                  <span className={`text-sm ${textColor}`}>
+                    {signal}{formatCurrency(tx.amount)}
+                  </span>
                 </div>
-                <span className={`text-sm font-bold ${tx.type === 'expense' ? 'text-rose-400' : 'text-emerald-400'}`}>
-                  {tx.type === 'expense' ? '-' : '+'}{formatCurrency(tx.amount)}
-                </span>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       </div>
