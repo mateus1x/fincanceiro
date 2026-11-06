@@ -23,7 +23,7 @@ import {
   Trash2
 } from 'lucide-react';
 
-// --- CONFIGURAÇÃO DO FIREBASE --
+// --- CONFIGURAÇÃO DO FIREBASE ---
 const firebaseConfig = {
   apiKey: "AIzaSyBKbLyMPB9Ddvka2tnMa54lyVZH1h7NOG8",
   authDomain: "meu-financeiro-19a3b.firebaseapp.com",
