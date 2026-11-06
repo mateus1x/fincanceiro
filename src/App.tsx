@@ -109,38 +109,44 @@ export default function App() {
           if (textoDitado) {
             const textoLower = textoDitado.toLowerCase();
             
-            // Identifica se é entrada (recebimento/lucro) ou saída (gasto)
+            // 1. Identifica se é entrada (recebimento/lucro) ou saída (gasto)
             const isIncome = textoLower.includes('recebi') || 
                              textoLower.includes('ganhei') || 
                              textoLower.includes('caiu') || 
                              textoLower.includes('lucro') || 
                              textoLower.includes('entrada');
 
+            // 2. Identifica o banco mencionado
+            let banco = 'Nubank';
+            if (textoLower.includes('inter')) {
+              banco = 'Inter';
+            } else if (textoLower.includes('nubank') || textoLower.includes('nu')) {
+              banco = 'Nubank';
+            }
+
+            // 3. Extrai o valor numérico
             const matchNumeros = textoDitado.match(/(\d+([.,]\d+)?)/);
             let valor = 0;
             if (matchNumeros) valor = parseFloat(matchNumeros[0].replace(',', '.'));
 
-            // Limpeza inteligente da descrição
+            // 4. Limpeza inteligente da descrição (remove o banco, valores e palavras de comando)
             let descricao = textoDitado
               .replace(matchNumeros ? matchNumeros[0] : '', '')
+              .replace(/banco\s*inter|inter|nubank|nu/gi, '')
               .replace(/reais|real|gastei|comprei|recebi|ganhei|caiu|lucro|no|na|de|por|um|uma/gi, '')
               .trim();
 
-            // Se sobrou pouca coisa ou ficou vazio, dá um nome padrão limpo
             if (!descricao || descricao.length < 2) {
               descricao = isIncome ? 'Recebimento via Siri' : 'Gasto via Siri';
             } else {
               descricao = descricao.charAt(0).toUpperCase() + descricao.slice(1);
             }
 
-            let banco = 'Nubank';
-            if (textoLower.includes('inter')) banco = 'Inter';
-
             const tipoTx = isIncome ? 'income' : 'expense';
 
             addTransaction(descricao, valor || 0, banco, tipoTx);
             
-            showToast(`Siri registrou: ${isIncome ? '+' : '-'}${formatCurrency(valor)} (${descricao})`);
+            showToast(`Siri registrou em ${banco}: ${isIncome ? '+' : '-'}${formatCurrency(valor)} (${descricao})`);
             deleteDoc(doc(db, "siri_inbox", change.doc.id));
           }
         }
