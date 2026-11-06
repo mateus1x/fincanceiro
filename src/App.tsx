@@ -37,7 +37,7 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
-// --- Hook Local para Configurações e Chat ---
+// --- Hook Local ---
 function useLocalStorage<T>(key: string, initialValue: T): [T, (value: T | ((val: T) => T)) => void] {
   const [storedValue, setStoredValue] = useState<T>(() => {
     try {
@@ -73,11 +73,9 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // --- State do Firebase ---
   const [transactions, setTransactions] = useState<any[]>([]);
   const [investments, setInvestments] = useState<any[]>([]);
   
-  // --- State Local ---
   const [settings, setSettings] = useLocalStorage('fin_settings_v2', {
     salary: 5000,
     voucher: 800,
@@ -85,10 +83,10 @@ export default function App() {
     voucherAccount: 'Nubank'
   });
   const [chatMessages, setChatMessages] = useLocalStorage('fin_chat_messages_v2', [
-    { role: 'model', text: 'Olá! Sou sua FinIA 🤖 Posso analisar seus gastos unificados ou registrar entradas e saídas. Pode digitar ou usar o microfone!' }
+    { role: 'model', text: 'Olá! Sou sua FinIA 🤖 Posso analisar seus gastos ou registrar entradas e saídas.' }
   ]);
 
-  // --- OUVINTES EM TEMPO REAL (FIREBASE) ---
+  // --- OUVINTES EM TEMPO REAL (FIREBASE & SIRI) ---
   useEffect(() => {
     const unsubTxs = onSnapshot(collection(db, "transactions"), (snapshot) => {
       const txData = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -109,28 +107,40 @@ export default function App() {
           const textoDitado = rawData.texto?.stringValue || rawData.texto || "";
 
           if (textoDitado) {
+            const textoLower = textoDitado.toLowerCase();
+            
+            // Identifica se é entrada (recebimento/lucro) ou saída (gasto)
+            const isIncome = textoLower.includes('recebi') || 
+                             textoLower.includes('ganhei') || 
+                             textoLower.includes('caiu') || 
+                             textoLower.includes('lucro') || 
+                             textoLower.includes('entrada');
+
             const matchNumeros = textoDitado.match(/(\d+([.,]\d+)?)/);
             let valor = 0;
             if (matchNumeros) valor = parseFloat(matchNumeros[0].replace(',', '.'));
 
-            let banco = 'Nubank';
-            if (textoDitado.toLowerCase().includes('inter')) banco = 'Inter';
-
-            const descricao = textoDitado
+            // Limpeza inteligente da descrição
+            let descricao = textoDitado
               .replace(matchNumeros ? matchNumeros[0] : '', '')
-              .replace(/reais|real|gastei|comprei|recebi|de|por|no|na/gi, '')
+              .replace(/reais|real|gastei|comprei|recebi|ganhei|caiu|lucro|no|na|de|por|um|uma/gi, '')
               .trim();
 
-            const tipoTx = textoDitado.toLowerCase().includes('recebi') ? 'income' : 'expense';
+            // Se sobrou pouca coisa ou ficou vazio, dá um nome padrão limpo
+            if (!descricao || descricao.length < 2) {
+              descricao = isIncome ? 'Recebimento via Siri' : 'Gasto via Siri';
+            } else {
+              descricao = descricao.charAt(0).toUpperCase() + descricao.slice(1);
+            }
 
-            addTransaction(
-              descricao ? descricao.charAt(0).toUpperCase() + descricao.slice(1) : 'Gasto via Siri', 
-              valor || 0, 
-              banco, 
-              tipoTx
-            );
+            let banco = 'Nubank';
+            if (textoLower.includes('inter')) banco = 'Inter';
+
+            const tipoTx = isIncome ? 'income' : 'expense';
+
+            addTransaction(descricao, valor || 0, banco, tipoTx);
             
-            showToast(`Siri registrou: ${formatCurrency(valor)}`);
+            showToast(`Siri registrou: ${isIncome ? '+' : '-'}${formatCurrency(valor)} (${descricao})`);
             deleteDoc(doc(db, "siri_inbox", change.doc.id));
           }
         }
@@ -153,7 +163,6 @@ export default function App() {
     return null;
   };
 
-  // --- CRUD FIREBASE ---
   const addTransaction = async (description: string, amount: number, account: string, type = 'expense') => {
     const parsedAmount = parseFloat(String(amount));
     const newTx = {
@@ -185,9 +194,6 @@ export default function App() {
   };
 
   const updateTransaction = async (id: string, updatedData: any) => {
-    const oldTx = transactions.find(t => t.id === id);
-    if (!oldTx) return;
-
     try {
       await updateDoc(doc(db, 'transactions', id), updatedData);
     } catch (e) {
