@@ -57,7 +57,7 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [toastMessage, setToastMessage] = useState(null);
 
-  // --- State (Updated keys to v2 to load new defaults) ---
+  // --- State ---
   const [transactions, setTransactions] = useLocalStorage('fin_transactions_v2', []);
   const [investments, setInvestments] = useLocalStorage('fin_investments_v2', [
     { id: '1', name: 'Caixinha Reserva', bank: 'Nubank', amount: 0 },
@@ -74,23 +74,6 @@ export default function App() {
   const [chatMessages, setChatMessages] = useLocalStorage('fin_chat_messages_v2', [
     { role: 'model', text: 'Olá! Sou sua FinIA 🤖 Posso analisar seus gastos, te dar dicas de investimentos ou registrar entradas e saídas automaticamente pra você. Pode digitar ou usar o microfone!' }
   ]);
-
-  // --- Derived State (Balances) ---
-  const getBalance = (account) => {
-    return transactions
-      .filter(t => account === 'Total' || t.account === account)
-      .reduce((acc, curr) => curr.type === 'income' ? acc + curr.amount : acc - curr.amount, 0);
-  };
-
-  const totalBalance = getBalance('Total');
-  const nubankBalance = getBalance('Nubank');
-  const interBalance = getBalance('Inter');
-
-  // --- Actions ---
-  const showToast = (msg) => {
-    setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3000);
-  };
 
   // Função auxiliar para identificar se é investimento e pegar o nome correto
   const getCaixinhaName = (description) => {
@@ -114,10 +97,8 @@ export default function App() {
     };
     setTransactions(prev => [newTx, ...prev]);
 
-    // Automação de Caixinhas: Se for um gasto e a descrição começar com "Investimento"
     if (type === 'expense') {
       const caixinhaName = getCaixinhaName(description);
-      
       if (caixinhaName) {
         setInvestments(prev => {
           const existing = prev.find(i => i.name.toLowerCase() === caixinhaName.toLowerCase() && i.bank === account);
@@ -129,6 +110,55 @@ export default function App() {
         });
       }
     }
+  };
+
+  // --- Integração com a Siri (Lê e processa perfeitamente o parâmetro ?texto= da URL) ---
+  useEffect(() => {
+    const queryParams = new URLSearchParams(window.location.search);
+    const textoParam = queryParams.get('texto');
+    
+    if (textoParam) {
+      const matchNumeros = textoParam.match(/(\d+([.,]\d+)?)/);
+      let valor = 0;
+      
+      if (matchNumeros) {
+        valor = parseFloat(matchNumeros[0].replace(',', '.'));
+      }
+
+      const descricao = textoParam
+        .replace(matchNumeros ? matchNumeros[0] : '', '')
+        .replace(/reais|real|gastei|comprei|de|por/gi, '')
+        .trim();
+
+      addTransaction(
+        descricao ? descricao.charAt(0).toUpperCase() + descricao.slice(1) : 'Gasto via Siri', 
+        valor || 0, 
+        'Nubank', 
+        'expense'
+      );
+      
+      showToast(`Gasto via Siri registrado: ${formatCurrency(valor)}`);
+
+      // Limpa a URL para evitar reprocessar ao atualizar a página
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }, []);
+
+  // --- Derived State (Balances) ---
+  const getBalance = (account) => {
+    return transactions
+      .filter(t => account === 'Total' || t.account === account)
+      .reduce((acc, curr) => curr.type === 'income' ? acc + curr.amount : acc - curr.amount, 0);
+  };
+
+  const totalBalance = getBalance('Total');
+  const nubankBalance = getBalance('Nubank');
+  const interBalance = getBalance('Inter');
+
+  // --- Actions ---
+  const showToast = (msg) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 3000);
   };
 
   const updateTransaction = (id, updatedData) => {
@@ -1105,7 +1135,7 @@ function SettingsModal({ settings, setSettings, onClose, onSimulateMonth }) {
               <ChevronRight size={18} />
             </button>
             <p className="text-center text-[10px] text-neutral-500 mt-3 px-4">
-              Isso vai depositar automaticamente o Salário e o Vale nas contas configuradas acima.
+              Isto vai depositar automaticamente o Salário e o Vale nas contas configuradas acima.
             </p>
           </div>
         </div>
@@ -1170,7 +1200,7 @@ DADOS ATUAIS:
 SUAS FUNÇÕES:
 1. ANALISAR E ACONSELHAR: Responda perguntas sobre gastos, investimentos e melhores bancos para investir.
 2. ADICIONAR GASTO/ENTRADA: Se o usuário pedir para registrar um gasto ou ganho comum.
-3. INVESTIR OU RESGATAR DE CAIXINHAS: Se o usuário pedir para investir em uma caixinha (ex: "investir 100 reais no Carro no Nubank") ou resgatar de uma caixinha (ex: "resgatar 50 reais da Viagem do Inter").
+3. INVESTIR OU RESGATAR DE CAIXINHAS: Se o usuário pedir para investir em uma caixinha ou resgatar.
 
 FORMATO DO JSON DE RESPOSTA (retorne obrigatoriamente no final se houver ação financeira):
 \`\`\`json
@@ -1197,7 +1227,7 @@ FORMATO DO JSON DE RESPOSTA (retorne obrigatoriamente no final se houver ação 
         }
       };
 
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=`, {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=SUA_CHAVE`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -1220,20 +1250,17 @@ FORMATO DO JSON DE RESPOSTA (retorne obrigatoriamente no final se houver ação 
             } 
             else if (actionData.action === 'invest_caixinha') {
               const cName = actionData.caixinhaName || 'Investimento';
-              // Registra saída do banco e atualiza caixinha
               addTransaction(`Investimento ${cName}`, actionData.amount, actionData.account, 'expense');
               showToast(`R$ ${actionData.amount} investido na caixinha ${cName}!`);
             } 
             else if (actionData.action === 'withdraw_caixinha') {
               const cName = actionData.caixinhaName || 'Investimento';
-              // Procura e desconta da caixinha se existir
               setInvestments(prev => prev.map(inv => {
                 if (inv.name.toLowerCase() === cName.toLowerCase() && inv.bank === actionData.account) {
                   return { ...inv, amount: Math.max(0, inv.amount - actionData.amount) };
                 }
                 return inv;
               }));
-              // Adiciona receita de resgate na conta
               addTransaction(`Resgate Caixinha: ${cName}`, actionData.amount, actionData.account, 'income');
               showToast(`Resgatado R$ ${actionData.amount} da caixinha ${cName}!`);
             }
