@@ -109,7 +109,7 @@ export default function App() {
           if (textoDitado) {
             const textoLower = textoDitado.toLowerCase();
             
-            // 1. Identificação RIGOROSA de Entrada vs Saída
+            // 1. Identificação Blindada de Entrada (Lucro) vs Saída (Gasto)
             const isIncome = textoLower.includes('recebi') || 
                              textoLower.includes('ganhei') || 
                              textoLower.includes('caiu') || 
@@ -126,16 +126,16 @@ export default function App() {
               banco = 'Nubank';
             }
 
-            // 3. Extração do Valor
+            // 3. Extração do Valor Numérico
             const matchNumeros = textoDitado.match(/(\d+([.,]\d+)?)/);
             let valor = 0;
             if (matchNumeros) valor = parseFloat(matchNumeros[0].replace(',', '.'));
 
-            // 4. Limpeza da Descrição (Remove o banco, valores e palavras de comando)
+            // 4. Limpeza Cirúrgica do Nome (Mantém o assunto principal ex: "Salário", remove bancos, valores e ruídos)
             let descricao = textoDitado
               .replace(matchNumeros ? matchNumeros[0] : '', '')
               .replace(/banco\s*inter|inter|nubank|nu/gi, '')
-              .replace(/reais|real|gastei|comprei|recebi|ganhei|caiu|lucro|salario|salário|no|na|de|por|um|uma/gi, '')
+              .replace(/reais|real|gastei|comprei|recebi|ganhei|caiu|lucro|no|na|de|por|um|uma/gi, '')
               .trim();
 
             if (!descricao || descricao.length < 2) {
@@ -144,9 +144,9 @@ export default function App() {
               descricao = descricao.charAt(0).toUpperCase() + descricao.slice(1);
             }
 
+            // FORÇA O TIPO CORRETO: 'income' para ganho, 'expense' para gasto
             const tipoTx = isIncome ? 'income' : 'expense';
 
-            // ATENÇÃO: Passando explicitamente o tipo correto ('income' ou 'expense')
             addTransaction(descricao, valor || 0, banco, tipoTx);
             
             showToast(`Siri registrou em ${banco}: ${isIncome ? '+' : '-'}${formatCurrency(valor)} (${descricao})`);
@@ -178,7 +178,7 @@ export default function App() {
       description,
       amount: parsedAmount,
       account,
-      type, // Garantido que salva 'income' ou 'expense' corretamente
+      type, // Garantido: 'income' (positivo) ou 'expense' (negativo)
       date: new Date().toISOString()
     };
     
