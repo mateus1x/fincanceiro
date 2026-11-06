@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { initializeApp } from "firebase/app";
-import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc, query } from "firebase/firestore";
+import { getFirestore, collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, query } from "firebase/firestore";
 import { 
   Home, 
   TrendingUp, 
@@ -37,7 +37,7 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
-// --- Custom Hook for Local Storage ---
+// --- Custom Hook for Local Storage (mantido apenas para configurações locais e chat) ---
 function useLocalStorage(key, initialValue) {
   const [storedValue, setStoredValue] = useState(() => {
     try {
@@ -69,18 +69,15 @@ const formatCurrency = (value) => {
 };
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard' | 'investments' | 'assistant' | 'analytics'
+  const [activeTab, setActiveTab] = useState('dashboard');
   const [showSettings, setShowSettings] = useState(false);
   const [toastMessage, setToastMessage] = useState(null);
 
-  // --- State ---
-  const [transactions, setTransactions] = useLocalStorage('fin_transactions_v2', []);
-  const [investments, setInvestments] = useLocalStorage('fin_investments_v2', [
-    { id: '1', name: 'Caixinha Reserva', bank: 'Nubank', amount: 0 },
-    { id: '2', name: 'Viagem', bank: 'Inter', amount: 0 },
-    { id: '3', name: 'Carro', bank: 'Inter', amount: 0 },
-    { id: '4', name: 'Investimento', bank: 'Inter', amount: 0 }
-  ]);
+  // --- State do Firebase ---
+  const [transactions, setTransactions] = useState([]);
+  const [investments, setInvestments] = useState([]);
+  
+  // --- State Local ---
   const [settings, setSettings] = useLocalStorage('fin_settings_v2', {
     salary: 5000,
     voucher: 800,
@@ -88,64 +85,37 @@ export default function App() {
     voucherAccount: 'Nubank'
   });
   const [chatMessages, setChatMessages] = useLocalStorage('fin_chat_messages_v2', [
-    { role: 'model', text: 'Olá! Sou sua FinIA 🤖 Posso analisar seus gastos, te dar dicas de investimentos ou registrar entradas e saídas automaticamente pra você. Pode digitar ou usar o microfone!' }
+    { role: 'model', text: 'Olá! Sou sua FinIA 🤖 Posso analisar seus gastos unificados ou registrar entradas e saídas. Pode digitar ou usar o microfone!' }
   ]);
 
-  // Função auxiliar para identificar se é investimento e pegar o nome correto
-  const getCaixinhaName = (description) => {
-    const match = description.match(/^investimentos?\s*(.*)/i);
-    if (match) {
-      const rawName = match[1].trim();
-      return rawName ? rawName.charAt(0).toUpperCase() + rawName.slice(1) : 'Investimento';
-    }
-    return null;
-  };
-
-  const addTransaction = (description, amount, account, type = 'expense') => {
-    const parsedAmount = parseFloat(amount);
-    const newTx = {
-      id: crypto.randomUUID(),
-      description,
-      amount: parsedAmount,
-      account,
-      type,
-      date: new Date().toISOString()
-    };
-    setTransactions(prev => [newTx, ...prev]);
-
-    if (type === 'expense') {
-      const caixinhaName = getCaixinhaName(description);
-      if (caixinhaName) {
-        setInvestments(prev => {
-          const existing = prev.find(i => i.name.toLowerCase() === caixinhaName.toLowerCase() && i.bank === account);
-          if (existing) {
-            return prev.map(i => i.id === existing.id ? { ...i, amount: i.amount + parsedAmount } : i);
-          } else {
-            return [...prev, { id: crypto.randomUUID(), name: caixinhaName, bank: account, amount: parsedAmount }];
-          }
-        });
-      }
-    }
-  };
-
-  // --- OUVINTE EM TEMPO REAL DA NUVEM (FIREBASE) PARA A SIRI ---
+  // --- OUVINTES EM TEMPO REAL (FIREBASE) ---
   useEffect(() => {
-    const q = query(collection(db, "siri_inbox"));
-    
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+    // 1. Ouvinte de Transações
+    const unsubTxs = onSnapshot(collection(db, "transactions"), (snapshot) => {
+      const txData = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      // Ordena da mais recente para a mais antiga
+      txData.sort((a, b) => new Date(b.date) - new Date(a.date));
+      setTransactions(txData);
+    });
+
+    // 2. Ouvinte de Caixinhas / Investimentos
+    const unsubInvs = onSnapshot(collection(db, "investments"), (snapshot) => {
+      const invData = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      setInvestments(invData);
+    });
+
+    // 3. Ouvinte da Siri
+    const qSiri = query(collection(db, "siri_inbox"));
+    const unsubSiri = onSnapshot(qSiri, (snapshot) => {
       snapshot.docChanges().forEach((change) => {
         if (change.type === "added") {
           const rawData = change.doc.data();
-          // Extrai o texto enviado pelo payload do Firebase REST API
           const textoDitado = rawData.texto?.stringValue || rawData.texto || "";
 
           if (textoDitado) {
             const matchNumeros = textoDitado.match(/(\d+([.,]\d+)?)/);
             let valor = 0;
-            
-            if (matchNumeros) {
-              valor = parseFloat(matchNumeros[0].replace(',', '.'));
-            }
+            if (matchNumeros) valor = parseFloat(matchNumeros[0].replace(',', '.'));
 
             let banco = 'Nubank';
             if (textoDitado.toLowerCase().includes('inter')) banco = 'Inter';
@@ -165,18 +135,121 @@ export default function App() {
             );
             
             showToast(`Siri registrou: ${formatCurrency(valor)}`);
-
-            // Deleta o documento da inbox da nuvem para não processar duplicado
             deleteDoc(doc(db, "siri_inbox", change.doc.id));
           }
         }
       });
-    }, (error) => {
-      console.error("Erro ao sincronizar com Firebase:", error);
     });
 
-    return () => unsubscribe();
-  }, []);
+    return () => {
+      unsubTxs();
+      unsubInvs();
+      unsubSiri();
+    };
+  }, [investments]); // Dependência em 'investments' para a lógica de atualização automática de caixinhas
+
+  // Função auxiliar para identificar se é investimento
+  const getCaixinhaName = (description) => {
+    const match = description.match(/^investimentos?\s*(.*)/i);
+    if (match) {
+      const rawName = match[1].trim();
+      return rawName ? rawName.charAt(0).toUpperCase() + rawName.slice(1) : 'Investimento';
+    }
+    return null;
+  };
+
+  // --- CRUD FIREBASE ---
+  const addTransaction = async (description, amount, account, type = 'expense') => {
+    const parsedAmount = parseFloat(amount);
+    const newTx = {
+      description,
+      amount: parsedAmount,
+      account,
+      type,
+      date: new Date().toISOString()
+    };
+    
+    try {
+      await addDoc(collection(db, 'transactions'), newTx);
+
+      // Automação da Caixinha
+      if (type === 'expense') {
+        const caixinhaName = getCaixinhaName(description);
+        if (caixinhaName) {
+          const existing = investments.find(i => i.name.toLowerCase() === caixinhaName.toLowerCase() && i.bank === account);
+          if (existing) {
+            await updateDoc(doc(db, 'investments', existing.id), { amount: existing.amount + parsedAmount });
+          } else {
+            await addDoc(collection(db, 'investments'), { name: caixinhaName, bank: account, amount: parsedAmount });
+          }
+        }
+      }
+    } catch (e) {
+      console.error("Erro ao adicionar transação: ", e);
+      showToast("Erro ao conectar com a nuvem.");
+    }
+  };
+
+  const updateTransaction = async (id, updatedData) => {
+    const oldTx = transactions.find(t => t.id === id);
+    if (!oldTx) return;
+
+    try {
+      await updateDoc(doc(db, 'transactions', id), updatedData);
+
+      // Recalcular caixinha se a transação antiga era um investimento
+      if (oldTx.type === 'expense') {
+        const oldCaixinhaName = getCaixinhaName(oldTx.description);
+        if (oldCaixinhaName) {
+          const invToReduce = investments.find(i => i.name.toLowerCase() === oldCaixinhaName.toLowerCase() && i.bank === oldTx.account);
+          if (invToReduce) {
+            await updateDoc(doc(db, 'investments', invToReduce.id), { amount: Math.max(0, invToReduce.amount - oldTx.amount) });
+          }
+        }
+      }
+
+      // Adicionar na nova caixinha se a nova versão for um investimento
+      const newType = updatedData.type !== undefined ? updatedData.type : oldTx.type;
+      if (newType === 'expense') {
+        const newDesc = updatedData.description !== undefined ? updatedData.description : oldTx.description;
+        const newAmount = updatedData.amount !== undefined ? updatedData.amount : oldTx.amount;
+        const newAccount = updatedData.account !== undefined ? updatedData.account : oldTx.account;
+        
+        const newCaixinhaName = getCaixinhaName(newDesc);
+        if (newCaixinhaName) {
+          const existingInv = investments.find(i => i.name.toLowerCase() === newCaixinhaName.toLowerCase() && i.bank === newAccount);
+          if (existingInv) {
+            await updateDoc(doc(db, 'investments', existingInv.id), { amount: existingInv.amount + newAmount });
+          } else {
+            await addDoc(collection(db, 'investments'), { name: newCaixinhaName, bank: newAccount, amount: newAmount });
+          }
+        }
+      }
+    } catch (e) {
+      console.error("Erro ao atualizar transação: ", e);
+    }
+  };
+
+  const deleteTransaction = async (id) => {
+    const txToDelete = transactions.find(t => t.id === id);
+    if (!txToDelete) return;
+
+    try {
+      await deleteDoc(doc(db, 'transactions', id));
+
+      if (txToDelete.type === 'expense') {
+        const caixinhaName = getCaixinhaName(txToDelete.description);
+        if (caixinhaName) {
+          const invToReduce = investments.find(i => i.name.toLowerCase() === caixinhaName.toLowerCase() && i.bank === txToDelete.account);
+          if (invToReduce) {
+            await updateDoc(doc(db, 'investments', invToReduce.id), { amount: Math.max(0, invToReduce.amount - txToDelete.amount) });
+          }
+        }
+      }
+    } catch (e) {
+      console.error("Erro ao deletar transação: ", e);
+    }
+  };
 
   // --- Derived State (Balances) ---
   const getBalance = (account) => {
@@ -189,77 +262,9 @@ export default function App() {
   const nubankBalance = getBalance('Nubank');
   const interBalance = getBalance('Inter');
 
-  // --- Actions ---
   const showToast = (msg) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3000);
-  };
-
-  const updateTransaction = (id, updatedData) => {
-    const oldTx = transactions.find(t => t.id === id);
-    if (!oldTx) return;
-
-    setTransactions(prev => prev.map(tx => tx.id === id ? { ...tx, ...updatedData } : tx));
-
-    setInvestments(prevInvestments => {
-      let newInvestments = [...prevInvestments];
-
-      if (oldTx.type === 'expense') {
-        const oldCaixinhaName = getCaixinhaName(oldTx.description);
-        if (oldCaixinhaName) {
-          newInvestments = newInvestments.map(inv => {
-            if (inv.name.toLowerCase() === oldCaixinhaName.toLowerCase() && inv.bank === oldTx.account) {
-              return { ...inv, amount: Math.max(0, inv.amount - oldTx.amount) };
-            }
-            return inv;
-          });
-        }
-      }
-
-      const newType = updatedData.type !== undefined ? updatedData.type : oldTx.type;
-      const newDesc = updatedData.description !== undefined ? updatedData.description : oldTx.description;
-      const newAmount = updatedData.amount !== undefined ? updatedData.amount : oldTx.amount;
-      const newAccount = updatedData.account !== undefined ? updatedData.account : oldTx.account;
-
-      if (newType === 'expense') {
-        const newCaixinhaName = getCaixinhaName(newDesc);
-        if (newCaixinhaName) {
-          const existingIndex = newInvestments.findIndex(i => i.name.toLowerCase() === newCaixinhaName.toLowerCase() && i.bank === newAccount);
-          if (existingIndex >= 0) {
-             newInvestments[existingIndex] = {
-               ...newInvestments[existingIndex],
-               amount: newInvestments[existingIndex].amount + newAmount
-             };
-          } else {
-             newInvestments.push({
-               id: crypto.randomUUID(),
-               name: newCaixinhaName,
-               bank: newAccount,
-               amount: newAmount
-             });
-          }
-        }
-      }
-
-      return newInvestments;
-    });
-  };
-
-  const deleteTransaction = (id) => {
-    const txToDelete = transactions.find(t => t.id === id);
-    setTransactions(prev => prev.filter(tx => tx.id !== id));
-
-    if (txToDelete && txToDelete.type === 'expense') {
-      const caixinhaName = getCaixinhaName(txToDelete.description);
-      if (caixinhaName) {
-        setInvestments(prev => prev.map(inv => {
-          if (inv.name.toLowerCase() === caixinhaName.toLowerCase() && inv.bank === txToDelete.account) {
-            return { ...inv, amount: Math.max(0, inv.amount - txToDelete.amount) };
-          }
-          return inv;
-        }));
-      }
-    }
   };
 
   const simulateMonthTurn = () => {
@@ -306,7 +311,7 @@ export default function App() {
           {activeTab === 'investments' && (
             <Investments 
               investments={investments} 
-              setInvestments={setInvestments}
+              db={db}
               showToast={showToast}
               transactions={transactions}
               addTransaction={addTransaction}
@@ -325,7 +330,7 @@ export default function App() {
               investments={investments}
               balances={{ total: totalBalance, nubank: nubankBalance, inter: interBalance }}
               addTransaction={addTransaction}
-              setInvestments={setInvestments}
+              db={db}
               showToast={showToast}
               chatMessages={chatMessages}
               setChatMessages={setChatMessages}
@@ -408,7 +413,7 @@ function Dashboard({ totalBalance, nubankBalance, interBalance, transactions, ad
     if (!desc || !amount) return;
     addTransaction(desc, amount, account, txType);
     
-    let msg = txType === 'expense' ? 'Gasto registrado!' : 'Ganho registrado!';
+    let msg = txType === 'expense' ? 'Gasto registrado na nuvem!' : 'Ganho registrado na nuvem!';
     if (txType === 'expense' && desc.match(/^investimentos?\s*(.*)/i)) {
       msg = `Dinheiro enviado para a Caixinha automaticamente!`;
     }
@@ -420,7 +425,6 @@ function Dashboard({ totalBalance, nubankBalance, interBalance, transactions, ad
 
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      
       <section className="space-y-4">
         <div className="bg-neutral-900 rounded-3xl p-6 shadow-sm border border-neutral-800">
           <p className="text-sm font-medium text-neutral-400 mb-1">Saldo Geral</p>
@@ -525,13 +529,13 @@ function Dashboard({ totalBalance, nubankBalance, interBalance, transactions, ad
 
       <section className="pb-4">
         <div className="flex justify-between items-center mb-4 ml-1">
-          <h3 className="text-sm font-bold text-neutral-300">Recentes</h3>
+          <h3 className="text-sm font-bold text-neutral-300">Recentes da Nuvem</h3>
         </div>
         
         <div className="space-y-3">
           {transactions.length === 0 ? (
             <div className="text-center py-8 text-neutral-600 text-sm bg-neutral-900/50 rounded-2xl border border-neutral-800/50">
-              Nenhuma movimentação ainda.
+              Nenhuma movimentação no Firebase ainda.
             </div>
           ) : (
             transactions.slice(0, 5).map(tx => (
@@ -574,12 +578,12 @@ function Dashboard({ totalBalance, nubankBalance, interBalance, transactions, ad
           onSave={(data) => {
             updateTransaction(editingTx.id, data);
             setEditingTx(null);
-            showToast('Movimentação atualizada!');
+            showToast('Movimentação atualizada na nuvem!');
           }}
           onDelete={() => {
             deleteTransaction(editingTx.id);
             setEditingTx(null);
-            showToast('Movimentação excluída!');
+            showToast('Movimentação excluída da nuvem!');
           }}
         />
       )}
@@ -595,12 +599,7 @@ function EditTransactionModal({ tx, onClose, onSave, onDelete }) {
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    onSave({
-      description,
-      amount: parseFloat(amount),
-      account,
-      type
-    });
+    onSave({ description, amount: parseFloat(amount), account, type });
   };
 
   return (
@@ -691,7 +690,7 @@ function EditTransactionModal({ tx, onClose, onSave, onDelete }) {
   );
 }
 
-function Investments({ investments, setInvestments, showToast, transactions, addTransaction }) {
+function Investments({ investments, db, showToast, transactions, addTransaction }) {
   const [editingId, setEditingId] = useState(null);
   const [editValue, setEditValue] = useState('');
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
@@ -711,39 +710,46 @@ function Investments({ investments, setInvestments, showToast, transactions, add
     return acc;
   }, {});
 
-  const handleUpdate = (id) => {
+  const handleUpdate = async (id) => {
     if (editValue === '') return;
-    setInvestments(prev => prev.map(inv => 
-      inv.id === id ? { ...inv, amount: parseFloat(editValue) } : inv
-    ));
-    setEditingId(null);
-    setEditValue('');
+    try {
+      await updateDoc(doc(db, 'investments', id), { amount: parseFloat(editValue) });
+      setEditingId(null);
+      setEditValue('');
+    } catch (e) {
+      console.error(e);
+    }
   };
 
-  const handleDelete = (id, name) => {
-    setInvestments(prev => prev.filter(inv => inv.id !== id));
-    setConfirmDeleteId(null);
-    showToast(`Caixinha "${name}" excluída com sucesso!`);
+  const handleDelete = async (id, name) => {
+    try {
+      await deleteDoc(doc(db, 'investments', id));
+      setConfirmDeleteId(null);
+      showToast(`Caixinha "${name}" excluída com sucesso!`);
+    } catch (e) {
+      console.error(e);
+    }
   };
 
-  const handleAddCaixinha = (e) => {
+  const handleAddCaixinha = async (e) => {
     e.preventDefault();
     if (!newName) return;
     
-    const newInv = {
-      id: crypto.randomUUID(),
-      name: newName,
-      bank: newBank,
-      amount: 0
-    };
-    
-    setInvestments(prev => [...prev, newInv]);
-    setNewName('');
-    setShowAddForm(false);
-    showToast(`Caixinha "${newName}" criada no ${newBank}!`);
+    try {
+      await addDoc(collection(db, 'investments'), {
+        name: newName,
+        bank: newBank,
+        amount: 0
+      });
+      setNewName('');
+      setShowAddForm(false);
+      showToast(`Caixinha "${newName}" criada no ${newBank}!`);
+    } catch (e) {
+      console.error(e);
+    }
   };
 
-  const handleWithdraw = (e) => {
+  const handleWithdraw = async (e) => {
     e.preventDefault();
     const val = parseFloat(withdrawAmount);
     if (!withdrawModal || isNaN(val) || val <= 0) return;
@@ -753,15 +759,15 @@ function Investments({ investments, setInvestments, showToast, transactions, add
       return;
     }
 
-    setInvestments(prev => prev.map(inv => 
-      inv.id === withdrawModal.id ? { ...inv, amount: inv.amount - val } : inv
-    ));
-
-    addTransaction(`Resgate Caixinha: ${withdrawModal.name}`, val, withdrawModal.bank, 'income');
-
-    showToast(`Resgatado ${formatCurrency(val)} para a conta ${withdrawModal.bank}!`);
-    setWithdrawModal(null);
-    setWithdrawAmount('');
+    try {
+      await updateDoc(doc(db, 'investments', withdrawModal.id), { amount: withdrawModal.amount - val });
+      addTransaction(`Resgate Caixinha: ${withdrawModal.name}`, val, withdrawModal.bank, 'income');
+      showToast(`Resgatado ${formatCurrency(val)} para a conta ${withdrawModal.bank}!`);
+      setWithdrawModal(null);
+      setWithdrawAmount('');
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   return (
@@ -776,7 +782,6 @@ function Investments({ investments, setInvestments, showToast, transactions, add
       </div>
 
       <div className="space-y-6">
-        
         {Object.keys(investmentsByBank).map(bankName => (
           <div key={bankName} className="space-y-3">
             <h3 className={`text-sm font-bold ml-1 flex items-center gap-2 ${bankName === 'Nubank' ? 'text-purple-400' : 'text-orange-400'}`}>
@@ -1004,23 +1009,20 @@ function Investments({ investments, setInvestments, showToast, transactions, add
   );
 }
 
+// A sua tela de Analytics atualizada já estava pronta e separada por meses (do passo anterior)
 function Analytics({ transactions }) {
-  const currentMonth = new Date().getMonth();
-  const currentYear = new Date().getFullYear();
+  const [currentDate, setCurrentDate] = useState(new Date());
   
+  const nextMonth = () => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1));
+  const prevMonth = () => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1));
+
   const monthlyTx = transactions.filter(t => {
     const txDate = new Date(t.date);
-    return txDate.getMonth() === currentMonth && txDate.getFullYear() === currentYear;
+    return txDate.getMonth() === currentDate.getMonth() && txDate.getFullYear() === currentDate.getFullYear();
   });
 
-  const monthlyIncome = monthlyTx
-    .filter(t => t.type === 'income')
-    .reduce((acc, curr) => acc + curr.amount, 0);
-    
-  const monthlyExpense = monthlyTx
-    .filter(t => t.type === 'expense')
-    .reduce((acc, curr) => acc + curr.amount, 0);
-
+  const monthlyIncome = monthlyTx.filter(t => t.type === 'income').reduce((acc, curr) => acc + curr.amount, 0);
+  const monthlyExpense = monthlyTx.filter(t => t.type === 'expense').reduce((acc, curr) => acc + curr.amount, 0);
   const budgetLeft = monthlyIncome - monthlyExpense;
   const percentSpent = monthlyIncome > 0 ? Math.min((monthlyExpense / monthlyIncome) * 100, 100) : 0;
   
@@ -1028,27 +1030,29 @@ function Analytics({ transactions }) {
   if (percentSpent > 70) progressColor = 'bg-yellow-500';
   if (percentSpent > 90) progressColor = 'bg-rose-500';
 
+  const monthName = currentDate.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-left-4 duration-500">
-      
-      <div>
-        <h2 className="text-xl font-bold text-white mb-4">Resumo de {new Date().toLocaleDateString('pt-BR', { month: 'long' })}</h2>
-        
-        <div className="grid grid-cols-2 gap-3 mb-4">
-          <div className="bg-neutral-900 rounded-2xl p-4 border border-emerald-500/20">
-            <p className="text-xs text-neutral-400 mb-1 flex items-center gap-1"><ArrowUpCircle size={12} className="text-emerald-400"/> Recebido</p>
-            <p className="text-lg font-bold text-emerald-400">{formatCurrency(monthlyIncome)}</p>
-          </div>
-          <div className="bg-neutral-900 rounded-2xl p-4 border border-rose-500/20">
-            <p className="text-xs text-neutral-400 mb-1 flex items-center gap-1"><ArrowDownCircle size={12} className="text-rose-400"/> Gasto</p>
-            <p className="text-lg font-bold text-rose-400">{formatCurrency(monthlyExpense)}</p>
-          </div>
+      <div className="flex items-center justify-between bg-neutral-900 p-2 rounded-2xl border border-neutral-800">
+        <button onClick={prevMonth} className="p-2 text-neutral-400 hover:text-white bg-neutral-950 rounded-xl"><ChevronRight size={18} className="rotate-180" /></button>
+        <h2 className="text-sm font-bold text-white uppercase tracking-wider">{monthName}</h2>
+        <button onClick={nextMonth} className="p-2 text-neutral-400 hover:text-white bg-neutral-950 rounded-xl"><ChevronRight size={18} /></button>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div className="bg-neutral-900 rounded-2xl p-4 border border-emerald-500/20">
+          <p className="text-xs text-neutral-400 mb-1 flex items-center gap-1"><ArrowUpCircle size={12} className="text-emerald-400"/> Entradas</p>
+          <p className="text-lg font-bold text-emerald-400">{formatCurrency(monthlyIncome)}</p>
+        </div>
+        <div className="bg-neutral-900 rounded-2xl p-4 border border-rose-500/20">
+          <p className="text-xs text-neutral-400 mb-1 flex items-center gap-1"><ArrowDownCircle size={12} className="text-rose-400"/> Saídas</p>
+          <p className="text-lg font-bold text-rose-400">{formatCurrency(monthlyExpense)}</p>
         </div>
       </div>
 
       <div className="bg-neutral-900 rounded-3xl p-6 border border-neutral-800 shadow-sm relative overflow-hidden">
-        <h3 className="text-sm font-bold text-neutral-300 mb-4">Seu Orçamento</h3>
-        
+        <h3 className="text-sm font-bold text-neutral-300 mb-4">Seu Orçamento do Mês</h3>
         <div className="flex justify-between items-end mb-2">
           <div>
             <p className="text-[10px] text-neutral-500 uppercase font-medium">Livre para gastar</p>
@@ -1060,35 +1064,30 @@ function Analytics({ transactions }) {
         </div>
 
         <div className="h-4 w-full bg-neutral-950 rounded-full overflow-hidden mt-4 border border-neutral-800">
-          <div 
-            className={`h-full ${progressColor} rounded-full transition-all duration-1000 ease-out`}
-            style={{ width: `${percentSpent}%` }}
-          />
+          <div className={`h-full ${progressColor} rounded-full transition-all duration-1000 ease-out`} style={{ width: `${percentSpent}%` }} />
         </div>
-        
-        {monthlyIncome === 0 && (
-          <p className="text-xs text-neutral-500 mt-4 text-center">
-            Adicione uma receita (Entrada) para ver seu orçamento.
-          </p>
-        )}
       </div>
 
       <div>
-        <h3 className="text-sm font-bold text-neutral-300 mb-3 ml-1">Onde você gastou esse mês</h3>
+        <h3 className="text-sm font-bold text-neutral-300 mb-3 ml-1">Extrato do Mês</h3>
         <div className="space-y-2">
-          {monthlyTx.filter(t => t.type === 'expense').length === 0 ? (
-            <p className="text-xs text-neutral-500 text-center py-4 bg-neutral-900 rounded-2xl">Nenhum gasto registrado este mês.</p>
+          {monthlyTx.length === 0 ? (
+            <p className="text-xs text-neutral-500 text-center py-4 bg-neutral-900 rounded-2xl">Nenhuma movimentação neste mês.</p>
           ) : (
-            monthlyTx.filter(t => t.type === 'expense').map(tx => (
+            monthlyTx.map(tx => (
               <div key={tx.id} className="flex justify-between items-center p-3 bg-neutral-900/50 rounded-xl border border-neutral-800">
-                <span className="text-sm text-neutral-200">{tx.description}</span>
-                <span className="text-sm font-bold text-rose-400">-{formatCurrency(tx.amount)}</span>
+                <div>
+                  <span className="text-sm font-medium text-neutral-200 block">{tx.description}</span>
+                  <span className="text-[10px] text-neutral-500">{new Date(tx.date).toLocaleDateString('pt-BR')} • {tx.account}</span>
+                </div>
+                <span className={`text-sm font-bold ${tx.type === 'expense' ? 'text-rose-400' : 'text-emerald-400'}`}>
+                  {tx.type === 'expense' ? '-' : '+'}{formatCurrency(tx.amount)}
+                </span>
               </div>
             ))
           )}
         </div>
       </div>
-
     </div>
   );
 }
@@ -1100,14 +1099,9 @@ function SettingsModal({ settings, setSettings, onClose, onSimulateMonth }) {
 
   return (
     <div className="absolute inset-0 z-50 flex items-end justify-center">
-      <div 
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm animate-in fade-in"
-        onClick={onClose}
-      ></div>
-      
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm animate-in fade-in" onClick={onClose}></div>
       <div className="bg-neutral-900 w-full rounded-t-[32px] p-6 pb-10 shadow-2xl relative z-10 animate-in slide-in-from-bottom-full duration-300 max-h-[85vh] overflow-y-auto">
         <div className="w-12 h-1.5 bg-neutral-800 rounded-full mx-auto mb-6"></div>
-        
         <div className="flex justify-between items-center mb-6">
           <h2 className="text-xl font-bold">Configurações</h2>
           <button onClick={onClose} className="w-8 h-8 bg-neutral-800 rounded-full flex items-center justify-center text-neutral-400">
@@ -1118,7 +1112,6 @@ function SettingsModal({ settings, setSettings, onClose, onSimulateMonth }) {
         <div className="space-y-6">
           <div className="space-y-4 bg-neutral-950 p-4 rounded-2xl border border-neutral-800">
             <h3 className="text-sm font-bold text-neutral-400 uppercase tracking-wider mb-2">Rendas Mensais Fixas</h3>
-            
             <div>
               <label className="text-xs font-medium text-neutral-500 block mb-1">Salário (Cai no 5º dia útil)</label>
               <div className="flex gap-2">
@@ -1138,7 +1131,6 @@ function SettingsModal({ settings, setSettings, onClose, onSimulateMonth }) {
                 </select>
               </div>
             </div>
-
             <div>
               <label className="text-xs font-medium text-neutral-500 block mb-1">Vale Alimentação/Refeição (1º dia útil)</label>
               <div className="flex gap-2">
@@ -1178,7 +1170,7 @@ function SettingsModal({ settings, setSettings, onClose, onSimulateMonth }) {
   );
 }
 
-function Assistant({ transactions, investments, balances, addTransaction, setInvestments, showToast, chatMessages, setChatMessages }) {
+function Assistant({ transactions, investments, balances, addTransaction, db, showToast, chatMessages, setChatMessages }) {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isListening, setIsListening] = useState(false);
@@ -1191,26 +1183,16 @@ function Assistant({ transactions, investments, balances, addTransaction, setInv
   const startListening = () => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      showToast('Microfone não suportado neste navegador. Use o texto.');
+      showToast('Microfone não suportado neste navegador.');
       return;
     }
     const recognition = new SpeechRecognition();
     recognition.lang = 'pt-BR';
     recognition.continuous = false;
-    recognition.interimResults = false;
-
+    
     recognition.onstart = () => setIsListening(true);
-    recognition.onresult = (event) => {
-      const transcript = event.results[0][0].transcript;
-      handleSend(transcript);
-    };
-    recognition.onerror = (event) => {
-      console.error("Speech error", event.error);
-      if (event.error !== 'aborted') {
-        showToast('Não consegui te ouvir direito. Tente novamente.');
-      }
-      setIsListening(false);
-    };
+    recognition.onresult = (event) => handleSend(event.results[0][0].transcript);
+    recognition.onerror = () => { setIsListening(false); showToast('Não entendi, tente novamente.'); };
     recognition.onend = () => setIsListening(false);
     
     recognition.start();
@@ -1225,40 +1207,29 @@ function Assistant({ transactions, investments, balances, addTransaction, setInv
     setInput('');
     setIsLoading(true);
 
-    const systemPrompt = `Você é a FinIA, uma consultora financeira e assistente pessoal no aplicativo do usuário.
+    const systemPrompt = `Você é a FinIA, uma assistente financeira no app.
 DADOS ATUAIS:
 - Saldo Total: R$ ${balances.total} (Nubank: R$ ${balances.nubank} | Inter: R$ ${balances.inter})
-- Caixinhas de Investimento atuais: ${JSON.stringify(investments)}
-- Histórico de Transações JSON (últimas 30): ${JSON.stringify(transactions.slice(0, 30))}
+- Caixinhas atuais: ${JSON.stringify(investments)}
 
-SUAS FUNÇÕES:
-1. ANALISAR E ACONSELHAR: Responda perguntas sobre gastos, investimentos e melhores bancos para investir.
-2. ADICIONAR GASTO/ENTRADA: Se o usuário pedir para registrar um gasto ou ganho comum.
-3. INVESTIR OU RESGATAR DE CAIXINHAS: Se o usuário pedir para investir em uma caixinha ou resgatar.
-
-FORMATO DO JSON DE RESPOSTA (retorne obrigatoriamente no final se houver ação financeira):
+FORMATO DO JSON DE RESPOSTA OBRIGATÓRIO (se houver ação):
 \`\`\`json
 {
   "action": "add_transaction" | "invest_caixinha" | "withdraw_caixinha",
-  "description": "descrição curta",
+  "description": "descrição",
   "amount": 50.00,
   "account": "Nubank" ou "Inter",
   "type": "expense" ou "income",
-  "caixinhaName": "Nome da Caixinha (se aplicável)"
+  "caixinhaName": "Nome da Caixinha"
 }
 \`\`\`
 `;
 
     try {
       const payload = {
-        contents: newMessages.map(m => ({
-          role: m.role,
-          parts: [{ text: m.text }]
-        })),
+        contents: newMessages.map(m => ({ role: m.role, parts: [{ text: m.text }] })),
         systemInstruction: { parts: [{ text: systemPrompt }] },
-        generationConfig: {
-          temperature: 0.3
-        }
+        generationConfig: { temperature: 0.3 }
       };
 
       const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=SUA_CHAVE`, {
@@ -1283,34 +1254,25 @@ FORMATO DO JSON DE RESPOSTA (retorne obrigatoriamente no final se houver ação 
               showToast(`${actionData.type === 'expense' ? 'Gasto' : 'Ganho'} adicionado!`);
             } 
             else if (actionData.action === 'invest_caixinha') {
-              const cName = actionData.caixinhaName || 'Investimento';
-              addTransaction(`Investimento ${cName}`, actionData.amount, actionData.account, 'expense');
-              showToast(`R$ ${actionData.amount} investido na caixinha ${cName}!`);
+              addTransaction(`Investimento ${actionData.caixinhaName || 'Investimento'}`, actionData.amount, actionData.account, 'expense');
             } 
             else if (actionData.action === 'withdraw_caixinha') {
               const cName = actionData.caixinhaName || 'Investimento';
-              setInvestments(prev => prev.map(inv => {
-                if (inv.name.toLowerCase() === cName.toLowerCase() && inv.bank === actionData.account) {
-                  return { ...inv, amount: Math.max(0, inv.amount - actionData.amount) };
-                }
-                return inv;
-              }));
-              addTransaction(`Resgate Caixinha: ${cName}`, actionData.amount, actionData.account, 'income');
-              showToast(`Resgatado R$ ${actionData.amount} da caixinha ${cName}!`);
+              const inv = investments.find(i => i.name.toLowerCase() === cName.toLowerCase() && i.bank === actionData.account);
+              if (inv) {
+                await updateDoc(doc(db, 'investments', inv.id), { amount: Math.max(0, inv.amount - actionData.amount) });
+                addTransaction(`Resgate Caixinha: ${cName}`, actionData.amount, actionData.account, 'income');
+              }
             }
-
             displayText = aiResponse.replace(/```json\n[\s\S]*?\n```/, '').trim();
-          } catch (err) {
-            console.error('Erro ao processar JSON da IA', err);
-          }
+          } catch (err) {}
         }
         
         setChatMessages([...newMessages, { role: 'model', text: displayText }]);
       }
     } catch (error) {
-      console.error('API Error:', error);
       showToast('Erro de conexão com a FinIA.');
-      setChatMessages([...newMessages, { role: 'model', text: 'Puxa, tive um problema de conexão. Pode repetir?' }]);
+      setChatMessages([...newMessages, { role: 'model', text: 'Tive um problema de conexão. Pode repetir?' }]);
     } finally {
       setIsLoading(false);
     }
@@ -1318,7 +1280,6 @@ FORMATO DO JSON DE RESPOSTA (retorne obrigatoriamente no final se houver ação 
 
   return (
     <div className="flex flex-col h-[calc(100vh-140px)] animate-in fade-in slide-in-from-right-4 duration-500">
-      
       <div className="bg-gradient-to-br from-purple-900/40 to-blue-900/40 rounded-3xl p-5 border border-purple-500/20 mb-4 shrink-0">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-full bg-purple-500/20 flex items-center justify-center text-purple-400">
@@ -1334,11 +1295,7 @@ FORMATO DO JSON DE RESPOSTA (retorne obrigatoriamente no final se houver ação 
       <div className="flex-1 overflow-y-auto no-scrollbar space-y-4 pb-4">
         {chatMessages.map((msg, idx) => (
           <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-            <div className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm ${
-              msg.role === 'user' 
-                ? 'bg-purple-600 text-white rounded-br-sm' 
-                : 'bg-neutral-900 border border-neutral-800 text-neutral-200 rounded-bl-sm'
-            }`}>
+            <div className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm ${msg.role === 'user' ? 'bg-purple-600 text-white rounded-br-sm' : 'bg-neutral-900 border border-neutral-800 text-neutral-200 rounded-bl-sm'}`}>
               {msg.text}
             </div>
           </div>
@@ -1361,10 +1318,7 @@ FORMATO DO JSON DE RESPOSTA (retorne obrigatoriamente no final se houver ação 
           </div>
         )}
         <div className="flex items-center gap-2 bg-neutral-900 p-1.5 rounded-2xl border border-neutral-800 focus-within:border-purple-500 transition-colors">
-          <button 
-            onClick={startListening}
-            className={`p-3 rounded-xl transition-all ${isListening ? 'bg-purple-600 text-white' : 'bg-neutral-800 text-neutral-400 hover:text-white'}`}
-          >
+          <button onClick={startListening} className={`p-3 rounded-xl transition-all ${isListening ? 'bg-purple-600 text-white' : 'bg-neutral-800 text-neutral-400 hover:text-white'}`}>
             <Mic size={20} />
           </button>
           <input 
@@ -1376,11 +1330,7 @@ FORMATO DO JSON DE RESPOSTA (retorne obrigatoriamente no final se houver ação 
             className="flex-1 bg-transparent border-none focus:outline-none text-sm px-2 text-white placeholder:text-neutral-600"
             disabled={isLoading || isListening}
           />
-          <button 
-            onClick={handleSend}
-            disabled={!input.trim() || isLoading}
-            className="p-3 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 disabled:bg-neutral-800 disabled:text-neutral-500 text-white rounded-xl transition-colors"
-          >
+          <button onClick={handleSend} disabled={!input.trim() || isLoading} className="p-3 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 disabled:bg-neutral-800 disabled:text-neutral-500 text-white rounded-xl transition-colors">
             <Send size={18} />
           </button>
         </div>
